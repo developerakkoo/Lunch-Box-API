@@ -1,21 +1,88 @@
 const router = require("express").Router();
 const controller = require("../controller/delivery_Agent.controller");
-const auth = require("../middlewares/auth.middleware");
+const driverAuth = require("../middlewares/driverAuth.middleware");
 
 /**
  * @swagger
  * tags:
- *   name: Delivery Agent
- *   description: Delivery agent profile management APIs
+ *   name: Driver
+ *   description: Delivery Driver APIs
  */
+
+
+/*
+|--------------------------------------------------------------------------
+| DRIVER AUTH ROUTES
+|--------------------------------------------------------------------------
+*/
+
+/**
+ * @swagger
+ * /api/delivery/register:
+ *   post:
+ *     summary: Register Driver
+ *     tags: [Driver]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/DriverRegisterRequest'
+ *     responses:
+ *       201:
+ *         description: Driver registered successfully
+ */
+router.post("/register", controller.registerDriver);
 
 
 /**
  * @swagger
- * /api/delivery/create:
+ * /api/delivery/login:
  *   post:
- *     summary: Create Delivery Agent Profile
- *     tags: [Delivery Agent]
+ *     summary: Driver Login
+ *     tags: [Driver]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/DriverLoginRequest'
+ *     responses:
+ *       200:
+ *         description: Login successful
+ */
+router.post("/login", controller.loginDriver);
+
+
+
+/*
+|--------------------------------------------------------------------------
+| DRIVER PROTECTED ROUTES
+|--------------------------------------------------------------------------
+*/
+
+/**
+ * @swagger
+ * /api/delivery/toggle-online:
+ *   put:
+ *     summary: Toggle driver online/offline
+ *     tags: [Driver]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Driver status updated
+ */
+router.put("/toggle-online", driverAuth, controller.toggleOnlineStatus);
+
+
+
+/**
+ * @swagger
+ * /api/delivery/update-location:
+ *   put:
+ *     summary: Update driver live location
+ *     tags: [Driver]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -24,22 +91,106 @@ const auth = require("../middlewares/auth.middleware");
  *         application/json:
  *           schema:
  *             type: object
+ *             required:
+ *               - latitude
+ *               - longitude
  *             properties:
- *               vehicleType:
- *                 type: string
- *                 example: Bike
- *               vehicleNumber:
- *                 type: string
- *                 example: MH12AB1234
- *               licenseNumber:
- *                 type: string
- *                 example: DL123456789
+ *               latitude:
+ *                 type: number
+ *                 example: 19.0760
+ *               longitude:
+ *                 type: number
+ *                 example: 72.8777
  *     responses:
- *       201:
- *         description: Delivery profile created successfully
- *       401:
- *         description: Unauthorized
+ *       200:
+ *         description: Location updated successfully
  */
-router.post("/create", auth, controller.createDeliveryProfile);
+router.put("/update-location", driverAuth, controller.updateLiveLocation);
+
+
+
+/**
+ * @swagger
+ * /api/delivery/accept-order/{orderId}:
+ *   put:
+ *     summary: Driver accept order
+ *     tags: [Driver]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Order ID
+ *     responses:
+ *       200:
+ *         description: Order accepted successfully
+ */
+router.put("/accept-order/:orderId", driverAuth, controller.acceptOrder);
+
+
+
+/**
+ * @swagger
+ * /api/delivery/pick-order/{orderId}:
+ *   put:
+ *     summary: Driver pick order
+ *     tags: [Driver]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Order ID
+ *     responses:
+ *       200:
+ *         description: Order picked successfully
+ */
+router.put("/pick-order/:orderId", driverAuth, controller.pickOrder);
+
+
+
+/**
+ * @swagger
+ * /api/delivery/complete-order/{orderId}:
+ *   put:
+ *     summary: Driver complete order
+ *     tags: [Driver]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Order ID
+ *     responses:
+ *       200:
+ *         description: Order completed successfully
+ */
+router.put("/complete-order/:orderId", driverAuth, controller.completeOrder);
+
+
+
+/**
+ * @swagger
+ * /api/delivery/dashboard:
+ *   get:
+ *     summary: Driver dashboard
+ *     tags: [Driver]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Driver dashboard data
+ */
+router.get("/dashboard", driverAuth, controller.getDashboard);
+
 
 module.exports = router;

@@ -206,3 +206,57 @@ exports.getDashboardStats = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+exports.getOrdersByStatus = async (req, res) => {
+  try {
+
+    const partnerId = req.partner.id;
+    const { status } = req.query;
+
+    const orders = await Order.find({
+      partner: partnerId,
+      status: status
+    })
+    .populate("customer", "name mobileNumber")
+    .populate("items.product", "name price");
+
+    res.json(orders);
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+exports.updateKitchenStatus = async (req, res) => {
+  try {
+
+    const partnerId = req.partner.id; // from partnerAuth middleware
+    const { status } = req.body;
+
+    if (!["ACTIVE", "INACTIVE"].includes(status)) {
+      return res.status(400).json({
+        message: "Invalid status. Use ACTIVE or INACTIVE"
+      });
+    }
+
+    const partner = await Partner.findById(partnerId);
+
+    if (!partner) {
+      return res.status(404).json({ message: "Partner not found" });
+    }
+
+    partner.status = status;
+    partner.isActive = status === "ACTIVE";
+
+    await partner.save();
+
+    res.json({
+      message: "Kitchen status updated successfully",
+      status: partner.status
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};

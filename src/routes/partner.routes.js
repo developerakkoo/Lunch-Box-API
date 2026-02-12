@@ -3,23 +3,20 @@
 // const auth = require("../middlewares/auth.middleware");
 // const auth1 = require("../middlewares/partnerAuth.middleware");
 
-
 // router.post("/register", controller.registerPartner);
 // router.post("/login", controller.loginPartner);
 // router.get("/dashboard", auth1, controller.getDashboardStats);
 // module.exports = router;
 
-
-const router = require("express").Router();
-const controller = require("../controller/partner.controller");
-const auth = require("../middlewares/partnerAuth.middleware");
+const router = require('express').Router()
+const controller = require('../controller/partner.controller')
+const auth = require('../middlewares/partnerAuth.middleware')
 
 /**
  * @swagger
  * tags:
  *   name: Partner
  */
-
 
 /**
  * @swagger
@@ -37,8 +34,7 @@ const auth = require("../middlewares/partnerAuth.middleware");
  *       201:
  *         description: Partner registered
  */
-router.post("/register", controller.registerPartner);
-
+router.post('/register', controller.registerPartner)
 
 /**
  * @swagger
@@ -56,8 +52,7 @@ router.post("/register", controller.registerPartner);
  *       200:
  *         description: Login successful
  */
-router.post("/login", controller.loginPartner);
-
+router.post('/login', controller.loginPartner)
 
 /**
  * @swagger
@@ -71,6 +66,55 @@ router.post("/login", controller.loginPartner);
  *       200:
  *         description: Dashboard stats
  */
-router.get("/dashboard", auth, controller.getDashboardStats);
+router.get('/dashboard', auth, controller.getDashboardStats)
 
-module.exports = router;
+/**
+ * @swagger
+ * /api/partner/orders:
+ *   get:
+ *     summary: View orders by status
+ *     tags: [Partner Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [NEW, CANCELLED, COMPLETED]
+ *         example: NEW
+ *     responses:
+ *       200:
+ *         description: Orders fetched successfully
+ */
+router.get('/orders', auth, controller.getOrdersByStatus)
+
+/**
+ * @swagger
+ * /api/partner/kitchen/status:
+ *   put:
+ *     summary: Update kitchen active/inactive status
+ *     tags: [Partner]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - status
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [ACTIVE, INACTIVE]
+ *                 example: INACTIVE
+ *     responses:
+ *       200:
+ *         description: Kitchen status updated successfully
+ */
+router.put('/kitchen/status', auth, controller.updateKitchenStatus)
+
+module.exports = router

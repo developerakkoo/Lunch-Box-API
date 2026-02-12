@@ -1,13 +1,30 @@
 const mongoose = require("mongoose");
 
-const addonItemSchema = new mongoose.Schema({
+const addonItemSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+    },
 
-  addonCategoryId: mongoose.Schema.Types.ObjectId,
+    price: {
+      type: Number,
+      required: true,
+    },
 
-  name: String,
+    addonCategory: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "AddonCategory",
+      required: true,
+    },
 
-  price: Number
-
-});
+    partner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Partner",
+      required: true,
+    },
+  },
+  { timestamps: true }
+);
 
 module.exports = mongoose.model("AddonItem", addonItemSchema);

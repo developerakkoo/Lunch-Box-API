@@ -1,14 +1,35 @@
 const mongoose = require("mongoose");
 
-const addonCategorySchema = new mongoose.Schema({
+const addonCategorySchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+    },
 
-  partnerId: mongoose.Schema.Types.ObjectId,
+    isRequired: {
+      type: Boolean,
+      default: false,
+    },
 
-  name: String,
+    maxSelection: {
+      type: Number,
+      default: 1,
+    },
 
-  minSelection: Number,
-  maxSelection: Number
+    menuItem: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "MenuItem",
+      required: true,
+    },
 
-});
+    partner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Partner",
+      required: true,
+    },
+  },
+  { timestamps: true }
+);
 
 module.exports = mongoose.model("AddonCategory", addonCategorySchema);

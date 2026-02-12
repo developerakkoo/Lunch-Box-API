@@ -1,33 +1,31 @@
 const mongoose = require("mongoose");
 
-const categorySchema = new mongoose.Schema({
-
-  partnerId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Partner",
-    required: true
+const categorySchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    description: {
+      type: String,
+      default: "",
+    },
+    image: {
+      type: String,
+      default: "",
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    partner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Partner",
+      required: true,
+    },
   },
-
-  name: {
-    type: String,
-    required: true
-  },
-
-  image: String,
-
-  isActive: {
-    type: Boolean,
-    default: true
-  },
-
-  sortOrder: {
-    type: Number,
-    default: 0
-  }
-
-}, { timestamps: true });
-
-
-categorySchema.index({ partnerId: 1 });
+  { timestamps: true }
+);
 
 module.exports = mongoose.model("Category", categorySchema);
