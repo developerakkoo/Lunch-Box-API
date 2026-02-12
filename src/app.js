@@ -3,7 +3,8 @@ const cors = require("cors");
 const morgan = require("morgan");
 const helmet = require("helmet");
 const compression = require("compression");
-
+const swaggerUi = require("swagger-ui-express");
+const swaggerSpec = require("../src/config/swagger");
 const app = express();
 
 // Middlewares
@@ -12,6 +13,8 @@ app.use(express.json());
 app.use(morgan("dev"));
 app.use(helmet());
 app.use(compression());
+
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // Import Routes
 const userRoutes = require("./routes/user.routes");

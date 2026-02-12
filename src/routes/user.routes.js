@@ -1,11 +1,44 @@
 const router = require("express").Router();
-
 const controller = require("../controller/user.controller");
-const auth = require("../../src/middlewares/auth.middleware");
+const auth = require("../middlewares/auth.middleware");
 
+/**
+ * @swagger
+ * tags:
+ *   name: User
+ */
+
+/**
+ * @swagger
+ * /api/user/login:
+ *   post:
+ *     summary: User Login / Register
+ *     tags: [User]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/UserLoginRequest'
+ *     responses:
+ *       200:
+ *         description: Login successful
+ */
 router.post("/login", controller.loginUser);
-router.post("/refresh-token", controller.refreshAccessToken);
 
+
+/**
+ * @swagger
+ * /api/user/profile:
+ *   get:
+ *     summary: Get User Profile
+ *     tags: [User]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: User profile
+ */
 router.get("/profile", auth, controller.getProfile);
 
 module.exports = router;
