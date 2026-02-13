@@ -22,7 +22,28 @@ exports.initSocket = serverIO => {
     })
 
     /*
-   
+    |--------------------------------------------------------------------------
+    | PARTNER JOIN ROOM
+    |--------------------------------------------------------------------------
+    */
+    socket.on('join-partner', partnerId => {
+      socket.join(`partner_${partnerId}`)
+      console.log(`🏪 Partner Joined Room partner_${partnerId}`)
+    })
+
+    /*
+    |--------------------------------------------------------------------------
+    | DELIVERY AGENT JOIN ROOM
+    |--------------------------------------------------------------------------
+    */
+    socket.on('join-delivery', deliveryId => {
+      socket.join(`delivery_${deliveryId}`)
+      console.log(`🚚 Delivery Joined Room delivery_${deliveryId}`)
+    })
+
+    socket.on('join-order-room', orderId => {
+      socket.join(`order_${orderId}`)
+    })
 
     /*
     |--------------------------------------------------------------------------
