@@ -1,5 +1,24 @@
 const mongoose = require("mongoose");
 
+const addressSchema = new mongoose.Schema({
+  label: {
+    type: String, // Home, Office
+  },
+  fullAddress: {
+    type: String,
+    required: true
+  },
+  city: String,
+  state: String,
+  pincode: String,
+  latitude: Number,
+  longitude: Number,
+  isDefault: {
+    type: Boolean,
+    default: false
+  }
+}, { _id: true });
+
 const userSchema = new mongoose.Schema(
   {
     countryCode: {
@@ -15,7 +34,19 @@ const userSchema = new mongoose.Schema(
 
     fullName: String,
     email: String,
-    address: String,
+
+    // 🔥 Multiple addresses support
+    addresses: [addressSchema],
+
+    // 🔥 Wallet system
+    walletBalance: {
+      type: Number,
+      default: 0
+    },
+
+    // 🔥 Referral
+    referralCode: String,
+    referredBy: String,
 
     isRegistered: {
       type: Boolean,

@@ -1,24 +1,14 @@
 const router = require("express").Router();
+const auth = require("../middlewares/auth.middleware");
+const orderController = require("../controller/order.controller");
 
-const controller = require("../controller/order.controller");
+router.post("/create", auth, orderController.createOrder);
 
-const userAuth = require("../middlewares/auth.middleware");
-const partnerAuth = require("../middlewares/partnerAuth.middleware");
+router.patch("/kitchen-action/:orderId", auth, orderController.kitchenAction);
 
+router.patch("/delivery-action/:orderId", auth, orderController.deliveryAction);
 
-// USER
-router.post("/create", userAuth, controller.createOrder);
-
-
-// PARTNER
-router.put("/accept/:orderId", partnerAuth, controller.acceptOrder);
-router.put("/reject/:orderId", partnerAuth, controller.rejectOrder);
-router.put("/ready/:orderId", partnerAuth, controller.readyOrder);
-
-
-// DELIVERY
-router.put("/assign/:orderId", partnerAuth, controller.assignDelivery);
-router.put("/pick/:orderId", userAuth, controller.pickOrder);
-router.put("/complete/:orderId", userAuth, controller.completeOrder);
+router.patch("/deliver/:orderId", auth, orderController.markDelivered);
+router.post('/confirm-payment', auth, orderController.confirmPayment);
 
 module.exports = router;

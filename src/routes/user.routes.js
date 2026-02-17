@@ -41,4 +41,7 @@ router.post("/login", controller.loginUser);
  */
 router.get("/profile", auth, controller.getProfile);
 
+/* ===== ADD ADDRESS ===== */
+router.post("/add-address", auth, controller.addAddress);
+
 module.exports = router;

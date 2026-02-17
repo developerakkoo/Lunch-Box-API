@@ -8,6 +8,12 @@ const {
   emitOrderDelivered
 } = require('../socket/order.socket')
 
+const findAgentFromToken = (driverId) =>
+  DeliveryAgent.findById(driverId).then((agent) => {
+    if (agent) return agent
+    return DeliveryAgent.findOne({ user: driverId })
+  })
+
 exports.registerDriver = async (req, res) => {
   try {
 
@@ -101,8 +107,7 @@ exports.createDeliveryProfile = async (req, res) => {
 */
 exports.toggleOnlineStatus = async (req, res) => {
   try {
-
-    const agent = await DeliveryAgent.findOne({ user: req.driver.id });
+    const agent = await findAgentFromToken(req.driver.id)
 
     if (!agent) {
       return res.status(404).json({ message: "Agent profile not found" });
@@ -134,8 +139,13 @@ exports.updateLiveLocation = async (req, res) => {
   try {
     const { latitude, longitude } = req.body
 
-    const agent = await DeliveryAgent.findOneAndUpdate(
-      { user: req.driver.id },
+    const existingAgent = await findAgentFromToken(req.driver.id)
+    if (!existingAgent) {
+      return res.status(404).json({ message: 'Agent profile not found' })
+    }
+
+    const agent = await DeliveryAgent.findByIdAndUpdate(
+      existingAgent._id,
       {
         liveLocation: {
           latitude,
@@ -159,30 +169,53 @@ exports.updateLiveLocation = async (req, res) => {
 */
 exports.acceptOrder = async (req, res) => {
   try {
-    const { orderId } = req.params
+    const { orderId } = req.params;
 
-    const agent = await DeliveryAgent.findOne({  user: req.driver.id })
-
-    if (!agent.isOnline) {
-      return res.status(400).json({ message: 'Agent offline' })
+    const agent = await findAgentFromToken(req.driver.id);
+    if (!agent) {
+      return res.status(404).json({ message: "Agent profile not found" });
     }
 
-    const order = await Order.findByIdAndUpdate(
-      orderId,
-      { deliveryAgent: agent._id },
-      { new: true }
-    )
+    if (!agent.isOnline) {
+      return res.status(400).json({ message: "Agent offline" });
+    }
 
-    agent.currentOrder = order._id
-    agent.isAvailable = false
+    if (!agent.isAvailable) {
+      return res.status(400).json({ message: "Already handling another order" });
+    }
 
-    await agent.save()
+    const order = await Order.findById(orderId);
 
-    res.json(order)
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (order.deliveryAgent) {
+      return res.status(400).json({ message: "Order already assigned" });
+    }
+
+    if (order.status !== "ACCEPTED") {
+      return res.status(400).json({ message: "Order not ready for delivery" });
+    }
+
+    order.deliveryAgent = agent._id;
+    order.status = "ASSIGNED_TO_DRIVER";
+    order.timeline.driverAssignedAt = new Date();
+
+    await order.save();
+
+    agent.currentOrder = order._id;
+    agent.isAvailable = false;
+
+    await agent.save();
+
+    res.json(order);
+
   } catch (error) {
-    res.status(500).json({ message: error.message })
+    res.status(500).json({ message: error.message });
   }
-}
+};
+
 
 /*
 |--------------------------------------------------------------------------
@@ -191,24 +224,28 @@ exports.acceptOrder = async (req, res) => {
 */
 exports.pickOrder = async (req, res) => {
   try {
-    const { orderId } = req.params
+    const { orderId } = req.params;
 
-    const order = await Order.findByIdAndUpdate(
-      orderId,
-      {
-        status: 'OUT_FOR_DELIVERY',
-        'timeline.pickedAt': new Date()
-      },
-      { new: true }
-    )
+    const order = await Order.findById(orderId);
 
-    emitOrderPicked(order)
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
 
-    res.json(order)
+    order.status = "OUT_FOR_DELIVERY";
+    order.timeline.pickedAt = new Date();
+
+    await order.save();
+
+    emitOrderPicked(order);
+
+    res.json(order);
+
   } catch (error) {
-    res.status(500).json({ message: error.message })
+    res.status(500).json({ message: error.message });
   }
-}
+};
+
 
 /*
 |--------------------------------------------------------------------------
@@ -217,35 +254,43 @@ exports.pickOrder = async (req, res) => {
 */
 exports.completeOrder = async (req, res) => {
   try {
-    const { orderId } = req.params
+    const { orderId } = req.params;
 
-    const order = await Order.findByIdAndUpdate(
-      orderId,
-      {
-        status: 'DELIVERED',
-        'timeline.deliveredAt': new Date()
-      },
-      { new: true }
-    )
+    const order = await Order.findById(orderId);
 
-    const agent = await DeliveryAgent.findById(order.deliveryAgent)
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
 
-    // Update earnings
-    agent.earnings.today += 40
-    agent.earnings.total += 40
+    order.status = "DELIVERED";
+    order.timeline.deliveredAt = new Date();
 
-    agent.currentOrder = null
-    agent.isAvailable = true
+    // 🔥 VERY IMPORTANT
+    if (order.payment.method === "COD") {
+      order.payment.paymentStatus = "SUCCESS";
+    }
 
-    await agent.save()
+    await order.save();
 
-    emitOrderDelivered(order)
+    const agent = await DeliveryAgent.findById(order.deliveryAgent);
 
-    res.json(order)
+    agent.earnings.today += 40;
+    agent.earnings.total += 40;
+
+    agent.currentOrder = null;
+    agent.isAvailable = true;
+
+    await agent.save();
+
+    emitOrderDelivered(order);
+
+    res.json(order);
+
   } catch (error) {
-    res.status(500).json({ message: error.message })
+    res.status(500).json({ message: error.message });
   }
-}
+};
+
 
 /*
 |--------------------------------------------------------------------------
@@ -254,7 +299,10 @@ exports.completeOrder = async (req, res) => {
 */
 exports.getDashboard = async (req, res) => {
   try {
-    const agent = await DeliveryAgent.findOne({ user: req.driver.id  })
+    const agent = await findAgentFromToken(req.driver.id)
+    if (!agent) {
+      return res.status(404).json({ message: 'Agent profile not found' })
+    }
 
     res.json({
       earnings: agent.earnings,

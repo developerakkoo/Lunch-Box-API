@@ -6,18 +6,19 @@ const {
 const jwt = require("jsonwebtoken");
 
 
-/* ================= LOGIN USER ================= */
+/* ================= LOGIN / REGISTER USER ================= */
 
 exports.loginUser = async (req, res) => {
-
   try {
 
-    const {
-      mobileNumber,
-      fullName,
-      email,
-      address
-    } = req.body;
+    const { countryCode, mobileNumber, fullName, email } = req.body;
+
+    if (!mobileNumber) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Mobile number is required"
+      });
+    }
 
     let user = await User.findOne({ mobileNumber });
 
@@ -25,48 +26,25 @@ exports.loginUser = async (req, res) => {
 
     if (!user) {
 
-      if (!fullName || !email || !address) {
+      if (!fullName || !email) {
         return res.status(400).json({
           statusCode: 400,
-          message: "Full name, email and address required"
+          message: "Full name and email required for new user"
         });
       }
 
       user = await User.create({
+        countryCode: countryCode || "+91",
         mobileNumber,
         fullName,
         email,
-        address,
         isRegistered: true
       });
 
-      const accessToken = generateAccessToken(user);
-      const refreshToken = generateRefreshToken(user);
-
-      user.refreshToken = refreshToken;
-      await user.save();
-
-      return res.status(201).json({
-        statusCode: 201,
-        message: "User registered successfully",
-        data: {
-          userId: user._id,
-          accessToken,
-          refreshToken,
-          user
-        }
-      });
+      console.log("🆕 New user created:", user._id);
     }
 
-
-    /* ===== EXISTING USER ===== */
-
-    if (!user.isRegistered) {
-      return res.status(400).json({
-        statusCode: 400,
-        message: "User profile incomplete"
-      });
-    }
+    /* ===== GENERATE TOKENS ===== */
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
@@ -74,7 +52,7 @@ exports.loginUser = async (req, res) => {
     user.refreshToken = refreshToken;
     await user.save();
 
-    return res.json({
+    return res.status(user.isNew ? 201 : 200).json({
       statusCode: 200,
       message: "Login successful",
       data: {
@@ -86,14 +64,89 @@ exports.loginUser = async (req, res) => {
     });
 
   } catch (error) {
+    console.log("🔥 Login Error:", error.message);
 
     res.status(500).json({
       statusCode: 500,
       message: error.message
     });
-
   }
 };
+
+/* ================= ADD ADDRESS ================= */
+
+exports.addAddress = async (req, res) => {
+  try {
+
+    const userId = req.user.id;   // from auth middleware
+
+    const {
+      label,
+      fullAddress,
+      city,
+      state,
+      pincode,
+      latitude,
+      longitude,
+      isDefault
+    } = req.body;
+
+    if (!fullAddress) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Full address is required"
+      });
+    }
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        statusCode: 404,
+        message: "User not found"
+      });
+    }
+
+    // 🔥 If new address is default → make others false
+    if (isDefault) {
+      user.addresses.forEach(addr => {
+        addr.isDefault = false;
+      });
+    }
+
+    user.addresses.push({
+      label,
+      fullAddress,
+      city,
+      state,
+      pincode,
+      latitude,
+      longitude,
+      isDefault: isDefault || false
+    });
+
+    await user.save();
+
+    console.log("🏠 Address added for user:", userId);
+
+    res.status(201).json({
+      statusCode: 201,
+      message: "Address added successfully",
+      data: user.addresses
+    });
+
+  } catch (error) {
+
+    console.log("🔥 Add Address Error:", error.message);
+
+    res.status(500).json({
+      statusCode: 500,
+      message: error.message
+    });
+  }
+};
+
+
 
 
 /* ================= PROFILE ================= */

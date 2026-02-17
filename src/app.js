@@ -48,6 +48,7 @@ const addonRoutes = require("./routes/addon.routes");
 
 // Order Routes
 const orderRoutes = require("./routes/order.routes");
+const createCart = require("./routes/cart.routes");
 
 /* ---------------------------- ADMIN ROUTES -------------------------------- */
 
@@ -75,6 +76,9 @@ app.use("/api/category", categoryRoutes);
 app.use("/api/menu", menuRoutes);
 app.use("/api/addon", addonRoutes);
 app.use("/api/order", orderRoutes);
+app.use("/api/cart", createCart);
+
+
 
 /* ----------------------------- ADMIN ROUTES -------------------------------- */
 
@@ -96,6 +100,7 @@ app.use((req, res) => {
 /* -------------------------------------------------------------------------- */
 /*                           GLOBAL ERROR HANDLER                             */
 /* -------------------------------------------------------------------------- */
+
 
 app.use((err, req, res, next) => {
   console.error(err);
