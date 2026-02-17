@@ -149,6 +149,83 @@ const options = {
             price: { type: "number", example: 30 },
             addonCategory: { type: "string", example: "addonCategoryId" }
           }
+        },
+
+        /* ================= USER ================= */
+
+        UserLoginRequest: {
+          type: "object",
+          required: ["mobileNumber"],
+          properties: {
+            countryCode: { type: "string", example: "+91" },
+            mobileNumber: { type: "string", example: "9876543210" },
+            fullName: { type: "string", example: "Rahul Sharma" },
+            email: { type: "string", example: "rahul@example.com" }
+          }
+        },
+
+        UserAddressCreateRequest: {
+          type: "object",
+          required: ["fullAddress"],
+          properties: {
+            label: { type: "string", example: "Home" },
+            fullAddress: { type: "string", example: "MG Road, Pune" },
+            city: { type: "string", example: "Pune" },
+            state: { type: "string", example: "Maharashtra" },
+            pincode: { type: "string", example: "411001" },
+            latitude: { type: "number", example: 18.5204 },
+            longitude: { type: "number", example: 73.8567 },
+            isDefault: { type: "boolean", example: true }
+          }
+        },
+
+        /* ================= CART ================= */
+
+        CartAddRequest: {
+          type: "object",
+          required: ["menuItemId"],
+          properties: {
+            menuItemId: { type: "string", example: "66ff1b2c3d4e5f6789012345" },
+            quantity: { type: "number", example: 2 }
+          }
+        },
+
+        /* ================= ORDER ================= */
+
+        OrderCreateRequest: {
+          type: "object",
+          required: ["addressId"],
+          properties: {
+            addressId: { type: "string", example: "66ff1b2c3d4e5f6789011111" },
+            paymentMethod: {
+              type: "string",
+              enum: ["COD", "ONLINE", "WALLET"],
+              example: "COD"
+            }
+          }
+        },
+
+        KitchenActionRequest: {
+          type: "object",
+          required: ["action"],
+          properties: {
+            action: {
+              type: "string",
+              enum: ["ACCEPT", "REJECT"],
+              example: "ACCEPT"
+            }
+          }
+        },
+
+        ConfirmPaymentRequest: {
+          type: "object",
+          required: ["orderId", "razorpay_payment_id", "razorpay_order_id", "razorpay_signature"],
+          properties: {
+            orderId: { type: "string", example: "66ff1b2c3d4e5f6789019999" },
+            razorpay_payment_id: { type: "string", example: "pay_Nw6..." },
+            razorpay_order_id: { type: "string", example: "order_Nw6..." },
+            razorpay_signature: { type: "string", example: "b1946ac92492d2347c6235b4d2611184" }
+          }
         }
 
       },

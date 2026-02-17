@@ -6,6 +6,7 @@ const auth = require("../middlewares/auth.middleware");
  * @swagger
  * tags:
  *   name: User
+ *   description: User APIs
  */
 
 /**
@@ -41,7 +42,26 @@ router.post("/login", controller.loginUser);
  */
 router.get("/profile", auth, controller.getProfile);
 
-/* ===== ADD ADDRESS ===== */
+/**
+ * @swagger
+ * /api/user/add-address:
+ *   post:
+ *     summary: Add user address
+ *     tags: [User]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/UserAddressCreateRequest'
+ *     responses:
+ *       201:
+ *         description: Address added successfully
+ *       401:
+ *         description: Unauthorized
+ */
 router.post("/add-address", auth, controller.addAddress);
 
 module.exports = router;
