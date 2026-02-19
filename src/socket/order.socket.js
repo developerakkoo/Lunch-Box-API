@@ -4,6 +4,15 @@ const Cart = require("../module/cart.model");
 const User = require("../module/user.model");
 const assignDeliveryBoy = require("../utils/deliveryAssignment");
 
+const emitOrderStatusUpdate = (io, order, status) => {
+  io.to(`user_${order.user}`).emit("order_status_update", {
+    orderId: order._id,
+    status,
+    internalStatus: order.status,
+    timeline: order.timeline
+  });
+};
+
 const orderSocketHandler = () => {
   const io = getIO();
 
@@ -23,6 +32,11 @@ const orderSocketHandler = () => {
     socket.on("join_delivery", (deliveryId) => {
       socket.join(`delivery_${deliveryId}`);
       console.log(`🚴 Delivery joined room: delivery_${deliveryId}`);
+    });
+
+    socket.on("join_order", (orderId) => {
+      socket.join(`order_${orderId}`);
+      console.log(`📦 Joined order room: order_${orderId}`);
     });
 
     // Create order via socket
@@ -91,6 +105,7 @@ const orderSocketHandler = () => {
         await cart.save();
 
         io.to(`kitchen_${order.partner}`).emit("new_order", order);
+        emitOrderStatusUpdate(io, order, "ORDER_RECEIVED");
 
         // If online, create razorpay order and return to client (client can pay later)
         let razorpayOrder = null;
@@ -124,6 +139,11 @@ const orderSocketHandler = () => {
           await order.save();
 
           io.to(`user_${order.user}`).emit("order_accepted", order);
+          emitOrderStatusUpdate(io, order, "ACCEPTED");
+
+          order.timeline.preparingAt = new Date();
+          await order.save();
+          emitOrderStatusUpdate(io, order, "PROCESSING");
 
           if (typeof assignDeliveryBoy === "function") {
             await assignDeliveryBoy(order);
@@ -145,6 +165,7 @@ const orderSocketHandler = () => {
           }
 
           io.to(`user_${order.user}`).emit("order_cancelled", order);
+          emitOrderStatusUpdate(io, order, "CANCELLED");
         }
 
         callback && callback({ status: "ok", order });
@@ -167,6 +188,7 @@ const orderSocketHandler = () => {
         await order.save();
 
         io.to(`user_${order.user}`).emit("delivery_started", order);
+        emitOrderStatusUpdate(io, order, "ON_ROUTE");
 
         callback && callback({ status: "ok", order });
       } catch (error) {
@@ -194,6 +216,7 @@ const orderSocketHandler = () => {
         await order.save();
 
         io.to(`user_${order.user}`).emit("order_delivered", order);
+        emitOrderStatusUpdate(io, order, "DELIVERED");
 
         if (order.payment?.method === 'ONLINE') {
           io.to(`user_${order.user}`).emit('payment_required', { orderId: order._id, amount: order.priceDetails?.totalAmount || 0 });

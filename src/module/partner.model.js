@@ -28,6 +28,9 @@ const partnerSchema = new mongoose.Schema(
 
     address: String,
 
+    latitude: Number,
+    longitude: Number,
+
     isActive: {
       type: Boolean,
       default: true

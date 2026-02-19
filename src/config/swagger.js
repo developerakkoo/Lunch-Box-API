@@ -160,7 +160,8 @@ const options = {
             countryCode: { type: "string", example: "+91" },
             mobileNumber: { type: "string", example: "9876543210" },
             fullName: { type: "string", example: "Rahul Sharma" },
-            email: { type: "string", example: "rahul@example.com" }
+            email: { type: "string", example: "rahul@example.com" },
+            referralCode: { type: "string", example: "RAHU12AB" }
           }
         },
 
@@ -176,6 +177,20 @@ const options = {
             latitude: { type: "number", example: 18.5204 },
             longitude: { type: "number", example: 73.8567 },
             isDefault: { type: "boolean", example: true }
+          }
+        },
+
+        UserAddressUpdateRequest: {
+          type: "object",
+          properties: {
+            label: { type: "string", example: "Office" },
+            fullAddress: { type: "string", example: "Baner Road, Pune" },
+            city: { type: "string", example: "Pune" },
+            state: { type: "string", example: "Maharashtra" },
+            pincode: { type: "string", example: "411045" },
+            latitude: { type: "number", example: 18.5679 },
+            longitude: { type: "number", example: 73.9143 },
+            isDefault: { type: "boolean", example: false }
           }
         },
 
@@ -225,6 +240,94 @@ const options = {
             razorpay_payment_id: { type: "string", example: "pay_Nw6..." },
             razorpay_order_id: { type: "string", example: "order_Nw6..." },
             razorpay_signature: { type: "string", example: "b1946ac92492d2347c6235b4d2611184" }
+          }
+        },
+
+        OrderCancelRequest: {
+          type: "object",
+          properties: {
+            reason: { type: "string", example: "Change of plans" }
+          }
+        },
+
+        WalletTopupCreateRequest: {
+          type: "object",
+          required: ["amount", "gateway"],
+          properties: {
+            amount: { type: "number", example: 500 },
+            gateway: { type: "string", enum: ["RAZORPAY", "STRIPE"], example: "RAZORPAY" }
+          }
+        },
+
+        WalletTopupConfirmRequest: {
+          type: "object",
+          required: ["gateway"],
+          properties: {
+            gateway: { type: "string", enum: ["RAZORPAY", "STRIPE"], example: "RAZORPAY" },
+            razorpay_payment_id: { type: "string", example: "pay_xxx" },
+            razorpay_order_id: { type: "string", example: "order_xxx" },
+            razorpay_signature: { type: "string", example: "signature_xxx" },
+            stripe_payment_intent_id: { type: "string", example: "pi_xxx" }
+          }
+        },
+
+        ApplyReferralRequest: {
+          type: "object",
+          required: ["referralCode"],
+          properties: {
+            referralCode: { type: "string", example: "RAHU12AB" }
+          }
+        },
+
+        SubscriptionPurchaseRequest: {
+          type: "object",
+          required: ["planId", "paymentMethod"],
+          properties: {
+            planId: { type: "string", example: "66ff1b2c3d4e5f678901aaaa" },
+            startDate: { type: "string", format: "date-time", example: "2026-02-20T00:00:00.000Z" },
+            paymentMethod: { type: "string", enum: ["WALLET", "RAZORPAY", "STRIPE"], example: "WALLET" }
+          }
+        },
+
+        SubscriptionPaymentConfirmRequest: {
+          type: "object",
+          required: ["gateway"],
+          properties: {
+            gateway: { type: "string", enum: ["RAZORPAY", "STRIPE"], example: "RAZORPAY" },
+            razorpay_payment_id: { type: "string", example: "pay_xxx" },
+            razorpay_order_id: { type: "string", example: "order_xxx" },
+            razorpay_signature: { type: "string", example: "signature_xxx" },
+            stripe_payment_intent_id: { type: "string", example: "pi_xxx" }
+          }
+        },
+
+        OrderRatingRequest: {
+          type: "object",
+          properties: {
+            partnerRating: { type: "number", example: 5 },
+            deliveryRating: { type: "number", example: 4 },
+            review: { type: "string", example: "Great food and on-time delivery." }
+          }
+        },
+
+        OrderTipRequest: {
+          type: "object",
+          required: ["amount", "paymentMethod"],
+          properties: {
+            amount: { type: "number", example: 30 },
+            paymentMethod: { type: "string", enum: ["WALLET", "RAZORPAY", "STRIPE"], example: "WALLET" }
+          }
+        },
+
+        TipPaymentConfirmRequest: {
+          type: "object",
+          required: ["gateway"],
+          properties: {
+            gateway: { type: "string", enum: ["RAZORPAY", "STRIPE"], example: "RAZORPAY" },
+            razorpay_payment_id: { type: "string", example: "pay_xxx" },
+            razorpay_order_id: { type: "string", example: "order_xxx" },
+            razorpay_signature: { type: "string", example: "signature_xxx" },
+            stripe_payment_intent_id: { type: "string", example: "pi_xxx" }
           }
         }
 

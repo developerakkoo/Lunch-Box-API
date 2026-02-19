@@ -31,4 +31,30 @@ const cartController = require("../../src/controller/cart.controller");
  */
 router.post("/add", auth, cartController.addToCart);
 
+/**
+ * @swagger
+ * /api/cart/checkout:
+ *   post:
+ *     summary: Checkout cart and apply coupon
+ *     tags: [Cart]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               couponCode:
+ *                 type: string
+ *                 example: WELCOME10
+ *     responses:
+ *       200:
+ *         description: Checkout summary
+ *       400:
+ *         description: Invalid coupon or cart state
+ */
+router.post("/checkout", auth, cartController.checkout);
+
 module.exports = router;

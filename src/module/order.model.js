@@ -176,6 +176,26 @@ const orderSchema = new mongoose.Schema(
       deliveryRating: Number,
       review: String,
     },
+
+    tip: {
+      amount: {
+        type: Number,
+        default: 0
+      },
+      paymentMethod: {
+        type: String,
+        enum: ["WALLET", "RAZORPAY", "STRIPE", null],
+        default: null
+      },
+      paymentStatus: {
+        type: String,
+        enum: ["PENDING", "PAID", "FAILED", null],
+        default: null
+      },
+      gatewayOrderId: String,
+      gatewayPaymentId: String,
+      tippedAt: Date
+    }
   },
   { timestamps: true }
 );

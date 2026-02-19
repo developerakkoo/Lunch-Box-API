@@ -91,8 +91,9 @@ exports.checkout = async (req, res) => {
 
     // 🔹 Apply Coupon
     if (couponCode) {
+      const now = new Date();
       const coupon = await Coupon.findOne({
-        code: couponCode,
+        code: couponCode.toUpperCase(),
         isActive: true
       });
 
@@ -100,10 +101,40 @@ exports.checkout = async (req, res) => {
         return res.status(400).json({ message: "Invalid coupon" });
       }
 
-      if (coupon.type === "PERCENTAGE") {
-        discount = (cart.totalAmount * coupon.value) / 100;
+      if (coupon.validFrom && coupon.validFrom > now) {
+        return res.status(400).json({ message: "Coupon is not active yet" });
+      }
+
+      if (coupon.validTill && coupon.validTill < now) {
+        return res.status(400).json({ message: "Coupon expired" });
+      }
+
+      if (coupon.usageLimit !== undefined && coupon.usedCount >= coupon.usageLimit) {
+        return res.status(400).json({ message: "Coupon usage limit exceeded" });
+      }
+
+      if (cart.totalAmount < (coupon.minOrderAmount || 0)) {
+        return res.status(400).json({
+          message: `Minimum order amount is ${coupon.minOrderAmount}`
+        });
+      }
+
+      if (
+        Array.isArray(coupon.applicableKitchens) &&
+        coupon.applicableKitchens.length > 0 &&
+        !coupon.applicableKitchens.some((id) => id.toString() === cart.kitchenId?.toString())
+      ) {
+        return res.status(400).json({ message: "Coupon is not applicable for this kitchen" });
+      }
+
+      if (coupon.discountType === "PERCENTAGE") {
+        discount = (cart.totalAmount * coupon.discountValue) / 100;
       } else {
-        discount = coupon.value;
+        discount = coupon.discountValue;
+      }
+
+      if (coupon.maxDiscountAmount) {
+        discount = Math.min(discount, coupon.maxDiscountAmount);
       }
     }
 

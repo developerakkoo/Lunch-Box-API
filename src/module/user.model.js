@@ -47,6 +47,21 @@ const userSchema = new mongoose.Schema(
     // 🔥 Referral
     referralCode: String,
     referredBy: String,
+    referralEarnings: {
+      type: Number,
+      default: 0
+    },
+    referralCount: {
+      type: Number,
+      default: 0
+    },
+
+    favoriteKitchens: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Partner"
+      }
+    ],
 
     isRegistered: {
       type: Boolean,
