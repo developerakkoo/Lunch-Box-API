@@ -2,6 +2,7 @@ const User = require("../module/user.model");
 const Partner = require("../module/partner.model");
 const Category = require("../module/category.model");
 const MenuItem = require("../module/menuItem.model");
+const Banner = require("../module/banner.model");
 const WalletTransaction = require("../module/walletTransaction.model");
 const { createOrder: createRazorpayOrder, verifySignature } = require("../utils/razorpay");
 const { createPaymentIntent, retrievePaymentIntent } = require("../utils/stripe");
@@ -591,6 +592,27 @@ exports.getMenuItemDetailsForCustomer = async (req, res) => {
   }
 };
 
+/* ================= OFFERS ================= */
+
+exports.getPublicOffers = async (req, res) => {
+  try {
+    const offers = await Banner.find({ isActive: true })
+      .select("title image redirectLink isActive createdAt")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Offers fetched successfully",
+      data: offers
+    });
+  } catch (error) {
+    return res.status(500).json({
+      statusCode: 500,
+      message: error.message
+    });
+  }
+};
+
 /* ================= WALLET ================= */
 
 exports.getWalletSummary = async (req, res) => {
@@ -962,6 +984,70 @@ exports.getProfile = async (req, res) => {
     statusCode: 200,
     data: user
   });
+};
+
+exports.updateProfile = async (req, res) => {
+  try {
+    const {
+      fullName,
+      email,
+      profileImage,
+      preferredLanguage,
+      textDirection
+    } = req.body || {};
+
+    if (email !== undefined && email !== null && email !== "") {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(String(email))) {
+        return res.status(400).json({
+          statusCode: 400,
+          code: "INVALID_EMAIL",
+          message: "Please provide a valid email address"
+        });
+      }
+    }
+
+    if (textDirection !== undefined && !["LTR", "RTL"].includes(textDirection)) {
+      return res.status(400).json({
+        statusCode: 400,
+        code: "INVALID_TEXT_DIRECTION",
+        message: "textDirection must be LTR or RTL"
+      });
+    }
+
+    const updatePayload = {};
+    if (fullName !== undefined) updatePayload.fullName = fullName;
+    if (email !== undefined) updatePayload.email = email;
+    if (profileImage !== undefined) updatePayload.profileImage = profileImage;
+    if (preferredLanguage !== undefined) updatePayload.preferredLanguage = preferredLanguage;
+    if (textDirection !== undefined) updatePayload.textDirection = textDirection;
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { $set: updatePayload },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        statusCode: 404,
+        code: "USER_NOT_FOUND",
+        message: "User not found"
+      });
+    }
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Profile updated successfully",
+      data: user
+    });
+  } catch (error) {
+    return res.status(500).json({
+      statusCode: 500,
+      code: "PROFILE_UPDATE_FAILED",
+      message: error.message
+    });
+  }
 };
 
 

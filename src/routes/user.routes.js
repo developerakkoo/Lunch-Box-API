@@ -111,6 +111,18 @@ router.get("/kitchen/:kitchenId/menu", controller.getKitchenMenuForCustomer);
  */
 router.get("/menu-item/:menuItemId", controller.getMenuItemDetailsForCustomer);
 
+/**
+ * @swagger
+ * /api/user/offers:
+ *   get:
+ *     summary: Get active public offers/banners for customer app
+ *     tags: [User]
+ *     responses:
+ *       200:
+ *         description: Offers fetched successfully
+ */
+router.get("/offers", controller.getPublicOffers);
+
 
 /**
  * @swagger
@@ -125,6 +137,28 @@ router.get("/menu-item/:menuItemId", controller.getMenuItemDetailsForCustomer);
  *         description: User profile
  */
 router.get("/profile", auth, controller.getProfile);
+
+/**
+ * @swagger
+ * /api/user/profile:
+ *   patch:
+ *     summary: Update user profile and language preferences (RTL/LTR)
+ *     tags: [User]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/UserProfileUpdateRequest'
+ *     responses:
+ *       200:
+ *         description: Profile updated successfully
+ *       400:
+ *         description: Invalid input
+ */
+router.patch("/profile", auth, controller.updateProfile);
 
 /**
  * @swagger

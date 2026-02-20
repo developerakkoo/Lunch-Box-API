@@ -1,29 +1,35 @@
 const DeliveryAgent = require("../module/Delivery_Agent");
-const Order = require("../module/order.model");
+const { notifyDeliveryAgent } = require("./deliveryNotification");
 
 async function assignDeliveryBoy(order) {
-  console.log("🚴 Searching for delivery boy...");
-
   const availableBoy = await DeliveryAgent.findOne({
-    isActive: true,
-    availabilityStatus: "ONLINE"
+    isOnline: true,
+    isAvailable: true,
+    status: { $in: ["APPROVED", "PENDING"] }
   });
 
   if (!availableBoy) {
-    console.log("❌ No delivery boy available");
-    return;
+    return null;
   }
 
-  order.deliveryBoyId = availableBoy._id;
-  order.orderStatus = "PROCESSING";
+  order.deliveryAgent = availableBoy._id;
   await order.save();
 
-  console.log("✅ Delivery Assigned:", availableBoy._id);
+  availableBoy.currentOrder = order._id;
+  availableBoy.isAvailable = false;
+  await availableBoy.save();
 
-  global.io.to(`delivery_${availableBoy._id}`).emit(
-    "order_assigned",
-    order
-  );
+  global.io?.to(`delivery_${availableBoy._id}`).emit("order_assigned", order);
+
+  await notifyDeliveryAgent({
+    deliveryAgentId: availableBoy._id,
+    type: "ORDER_ASSIGNED",
+    title: "New Order Assigned",
+    message: `Order #${order._id.toString().slice(-6)} assigned to you`,
+    data: { orderId: order._id, status: order.status }
+  });
+
+  return availableBoy;
 }
 
 module.exports = assignDeliveryBoy;

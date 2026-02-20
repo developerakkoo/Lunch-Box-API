@@ -107,3 +107,31 @@ exports.deleteMenuItem = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// TOGGLE MENU ITEM STATUS
+exports.toggleMenuItemStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const menu = await MenuItem.findOne({
+      _id: id,
+      partner: req.partner.id
+    });
+
+    if (!menu) {
+      return res.status(404).json({ message: "Menu item not found" });
+    }
+
+    menu.isAvailable = !menu.isAvailable;
+    await menu.save();
+
+    return res.status(200).json({
+      message: "Menu item status updated successfully",
+      data: {
+        _id: menu._id,
+        isAvailable: menu.isAvailable
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};

@@ -3,6 +3,7 @@ const Order = require("../module/order.model");
 const Cart = require("../module/cart.model");
 const User = require("../module/user.model");
 const assignDeliveryBoy = require("../utils/deliveryAssignment");
+const { notifyPartner } = require("../utils/partnerNotification");
 
 const emitOrderStatusUpdate = (io, order, status) => {
   io.to(`user_${order.user}`).emit("order_status_update", {
@@ -106,6 +107,13 @@ const orderSocketHandler = () => {
 
         io.to(`kitchen_${order.partner}`).emit("new_order", order);
         emitOrderStatusUpdate(io, order, "ORDER_RECEIVED");
+        await notifyPartner({
+          partnerId: order.partner,
+          type: "NEW_ORDER",
+          title: "New Order Received",
+          message: `You received a new order #${order._id.toString().slice(-6)}`,
+          data: { orderId: order._id, status: order.status }
+        });
 
         // If online, create razorpay order and return to client (client can pay later)
         let razorpayOrder = null;

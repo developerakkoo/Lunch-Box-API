@@ -17,5 +17,6 @@ router.get("/list", partnerAuth, controller.getMenuItems);
 router.put("/update/:id", partnerAuth, controller.updateMenuItem);
 
 router.delete("/delete/:id", partnerAuth, controller.deleteMenuItem);
+router.patch("/status/:id", partnerAuth, controller.toggleMenuItemStatus);
 
 module.exports = router;

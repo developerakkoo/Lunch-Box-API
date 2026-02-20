@@ -34,6 +34,16 @@ const userSchema = new mongoose.Schema(
 
     fullName: String,
     email: String,
+    profileImage: String,
+    preferredLanguage: {
+      type: String,
+      default: "en"
+    },
+    textDirection: {
+      type: String,
+      enum: ["LTR", "RTL"],
+      default: "LTR"
+    },
 
     // 🔥 Multiple addresses support
     addresses: [addressSchema],

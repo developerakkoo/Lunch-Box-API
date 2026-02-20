@@ -1,5 +1,7 @@
 const router = require("express").Router();
 const auth = require("../middlewares/auth.middleware");
+const partnerAuth = require("../middlewares/partnerAuth.middleware");
+const driverAuth = require("../middlewares/driverAuth.middleware");
 const orderController = require("../controller/order.controller");
 
 /**
@@ -57,7 +59,7 @@ router.post("/create", auth, orderController.createOrder);
  *       404:
  *         description: Order not found
  */
-router.patch("/kitchen-action/:orderId", auth, orderController.kitchenAction);
+router.patch("/kitchen-action/:orderId", partnerAuth, orderController.kitchenAction);
 
 /**
  * @swagger
@@ -79,7 +81,7 @@ router.patch("/kitchen-action/:orderId", auth, orderController.kitchenAction);
  *       404:
  *         description: Order not found
  */
-router.patch("/delivery-action/:orderId", auth, orderController.deliveryAction);
+router.patch("/delivery-action/:orderId", driverAuth, orderController.deliveryAction);
 
 /**
  * @swagger
@@ -101,7 +103,7 @@ router.patch("/delivery-action/:orderId", auth, orderController.deliveryAction);
  *       404:
  *         description: Order not found
  */
-router.patch("/deliver/:orderId", auth, orderController.markDelivered);
+router.patch("/deliver/:orderId", driverAuth, orderController.markDelivered);
 
 /**
  * @swagger

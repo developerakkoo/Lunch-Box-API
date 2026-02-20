@@ -75,6 +75,41 @@ const options = {
           }
         },
 
+        DriverProfileUpdateRequest: {
+          type: "object",
+          properties: {
+            fullName: { type: "string", example: "Driver Rahul" },
+            mobileNumber: { type: "string", example: "9876543210" },
+            address: { type: "string", example: "Pune" },
+            profileImage: { type: "string", example: "https://example.com/driver.jpg" },
+            vehicle: {
+              type: "object",
+              properties: {
+                type: { type: "string", enum: ["BIKE", "SCOOTER", "BICYCLE", "CAR"] },
+                vehicleNumber: { type: "string", example: "MH12AB1234" },
+                model: { type: "string", example: "Activa 6G" },
+                color: { type: "string", example: "Black" }
+              }
+            },
+            documents: {
+              type: "object",
+              properties: {
+                licenseNumber: { type: "string", example: "DL-12345678" },
+                aadhaarNumber: { type: "string", example: "123412341234" },
+                panNumber: { type: "string", example: "ABCDE1234F" }
+              }
+            }
+          }
+        },
+
+        DriverAvailabilityRequest: {
+          type: "object",
+          required: ["status"],
+          properties: {
+            status: { type: "string", enum: ["ACTIVE", "INACTIVE"], example: "ACTIVE" }
+          }
+        },
+
 
         /* ================= PARTNER ================= */
 
@@ -93,6 +128,18 @@ const options = {
           properties: {
             email: { type: "string", example: "rahul@gmail.com" },
             password: { type: "string", example: "123456" }
+          }
+        },
+
+        PartnerProfileUpdateRequest: {
+          type: "object",
+          properties: {
+            kitchenName: { type: "string", example: "Spicy House" },
+            ownerName: { type: "string", example: "Rahul" },
+            phone: { type: "string", example: "9876543210" },
+            address: { type: "string", example: "Pune, Maharashtra" },
+            latitude: { type: "number", example: 18.5204 },
+            longitude: { type: "number", example: 73.8567 }
           }
         },
 
@@ -191,6 +238,17 @@ const options = {
             latitude: { type: "number", example: 18.5679 },
             longitude: { type: "number", example: 73.9143 },
             isDefault: { type: "boolean", example: false }
+          }
+        },
+
+        UserProfileUpdateRequest: {
+          type: "object",
+          properties: {
+            fullName: { type: "string", example: "Rahul Sharma" },
+            email: { type: "string", example: "rahul@example.com" },
+            profileImage: { type: "string", example: "https://example.com/profile.jpg" },
+            preferredLanguage: { type: "string", example: "en" },
+            textDirection: { type: "string", enum: ["LTR", "RTL"], example: "LTR" }
           }
         },
 
