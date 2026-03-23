@@ -1,137 +1,177 @@
-const MenuItem = require("../module/menuItem.model");
-const Category = require("../module/category.model");
-
+const MenuItem = require('../module/menuItem.model')
+const Category = require('../module/category.model')
 
 // CREATE MENU ITEM
 exports.createMenuItem = async (req, res) => {
   try {
-    const { name, description, price, image, isVeg, category } = req.body;
+    const { name, description, price, discountPrice, images, isVeg, category } =
+      req.body
 
     // Validate category belongs to partner
     const categoryExists = await Category.findOne({
       _id: category,
-      partner: req.partner.id,
-    });
+      partner: req.partner.id
+    })
 
     if (!categoryExists) {
-      return res.status(404).json({ message: "Category not found" });
+      return res.status(404).json({ message: 'Category not found' })
     }
 
     const menu = await MenuItem.create({
       name,
       description,
       price,
-      image,
+      discountPrice,
+      images,
       isVeg,
       category,
-      partner: req.partner.id,
-    });
+      partner: req.partner.id
+    })
 
     res.status(201).json({
-      message: "Menu item created successfully",
-      data: menu,
-    });
-
+      message: 'Menu item created successfully',
+      data: menu
+    })
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: error.message })
   }
-};
+}
 
+exports.bulkCreateMenuItems = async (req, res) => {
+  try {
+    const { items } = req.body
 
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'Items array is required' })
+    }
+
+    const partnerId = req.partner.id
+
+    // Get all unique category IDs
+    const categoryIds = [...new Set(items.map(item => item.category))]
+
+    // Validate categories
+    const categories = await Category.find({
+      _id: { $in: categoryIds },
+      partner: partnerId
+    })
+
+    if (categories.length !== categoryIds.length) {
+      return res.status(400).json({
+        message: 'Some categories are invalid or do not belong to this partner'
+      })
+    }
+
+    // Prepare data
+    const menuItems = items.map(item => ({
+      name: item.name,
+      description: item.description || '',
+      price: item.price,
+      discountPrice: item.discountPrice || 0,
+      images: item.images || '',
+      isVeg: item.isVeg ?? true,
+      category: item.category,
+      partner: partnerId
+    }))
+
+    const result = await MenuItem.insertMany(menuItems)
+
+    res.status(201).json({
+      message: 'Bulk menu items created successfully',
+      count: result.length,
+      data: result
+    })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
 
 // GET MENU ITEMS
 exports.getMenuItems = async (req, res) => {
   try {
     const menuItems = await MenuItem.find({
-      partner: req.partner.id,
-    }).populate("category", "name");
+      partner: req.partner.id
+    }).populate('category', 'name')
 
     res.status(200).json({
       total: menuItems.length,
-      data: menuItems,
-    });
-
+      data: menuItems
+    })
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: error.message })
   }
-};
-
-
+}
 
 // UPDATE MENU ITEM
 exports.updateMenuItem = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params
 
     const menu = await MenuItem.findOneAndUpdate(
       { _id: id, partner: req.partner.id },
       req.body,
       { new: true }
-    );
+    )
 
     if (!menu) {
-      return res.status(404).json({ message: "Menu item not found" });
+      return res.status(404).json({ message: 'Menu item not found' })
     }
 
     res.status(200).json({
-      message: "Menu item updated successfully",
-      data: menu,
-    });
-
+      message: 'Menu item updated successfully',
+      data: menu
+    })
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: error.message })
   }
-};
-
-
+}
 
 // DELETE MENU ITEM
 exports.deleteMenuItem = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params
 
     const menu = await MenuItem.findOneAndDelete({
       _id: id,
-      partner: req.partner.id,
-    });
+      partner: req.partner.id
+    })
 
     if (!menu) {
-      return res.status(404).json({ message: "Menu item not found" });
+      return res.status(404).json({ message: 'Menu item not found' })
     }
 
     res.status(200).json({
-      message: "Menu item deleted successfully",
-    });
-
+      message: 'Menu item deleted successfully'
+    })
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: error.message })
   }
-};
+}
 
 // TOGGLE MENU ITEM STATUS
 exports.toggleMenuItemStatus = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params
     const menu = await MenuItem.findOne({
       _id: id,
       partner: req.partner.id
-    });
+    })
 
     if (!menu) {
-      return res.status(404).json({ message: "Menu item not found" });
+      return res.status(404).json({ message: 'Menu item not found' })
     }
 
-    menu.isAvailable = !menu.isAvailable;
-    await menu.save();
+    menu.isAvailable = !menu.isAvailable
+    await menu.save()
 
     return res.status(200).json({
-      message: "Menu item status updated successfully",
+      message: 'Menu item status updated successfully',
       data: {
         _id: menu._id,
         isAvailable: menu.isAvailable
       }
-    });
+    })
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message })
   }
-};
+}

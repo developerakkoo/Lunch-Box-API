@@ -12,6 +12,8 @@ const partnerAuth = require("../middlewares/partnerAuth.middleware");
 
 router.post("/create", partnerAuth, controller.createMenuItem);
 
+router.post("/bulk", partnerAuth, controller.bulkCreateMenuItems);
+
 router.get("/list", partnerAuth, controller.getMenuItems);
 
 router.put("/update/:id", partnerAuth, controller.updateMenuItem);
