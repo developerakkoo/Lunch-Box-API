@@ -107,6 +107,9 @@ const orderSchema = new mongoose.Schema(
         default: "PENDING",
       },
 
+      gatewayOrderId: String,
+      gatewayPaymentId: String,
+      gatewaySignature: String,
       transactionId: String,
     },
 

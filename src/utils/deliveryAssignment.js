@@ -20,6 +20,14 @@ async function assignDeliveryBoy(order) {
   await availableBoy.save();
 
   global.io?.to(`delivery_${availableBoy._id}`).emit("order_assigned", order);
+  global.io?.to(`user_${order.user}`).emit("delivery_assigned", {
+    orderId: order._id,
+    deliveryAgentId: availableBoy._id
+  });
+  global.io?.to(`kitchen_${order.partner}`).emit("delivery_assigned", {
+    orderId: order._id,
+    deliveryAgentId: availableBoy._id
+  });
 
   await notifyDeliveryAgent({
     deliveryAgentId: availableBoy._id,

@@ -10,6 +10,16 @@ const assignDeliveryBoy = require("../utils/deliveryAssignment");
 const { notifyPartner } = require("../utils/partnerNotification");
 const mongoose = require("mongoose");
 
+const CUSTOMER_STATUS = {
+  PLACED: "ORDER_RECEIVED",
+  ACCEPTED: "ACCEPTED",
+  PREPARING: "PROCESSING",
+  READY: "READY_FOR_PICKUP",
+  OUT_FOR_DELIVERY: "ON_ROUTE",
+  DELIVERED: "DELIVERED",
+  CANCELLED: "CANCELLED"
+};
+
 const emitOrderStatusUpdate = (order, customerStatus) => {
   global.io?.to(`user_${order.user}`).emit("order_status_update", {
     orderId: order._id,
@@ -26,6 +36,8 @@ const apiError = (res, status, code, message, details) =>
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 const getActorIdFromReq = (req) => req?.user?.id || req?.partner?.id || req?.driver?.id;
+const emitCustomerStatusFromOrder = (order) =>
+  emitOrderStatusUpdate(order, CUSTOMER_STATUS[order.status] || order.status);
 
 const getActorRole = async (actorId) => {
   if (!isValidObjectId(actorId)) return null;
@@ -156,6 +168,10 @@ exports.createOrder = async (req, res) => {
       try {
         // amount in paise
         razorpayOrder = await createRazorOrder(Math.round(cart.totalAmount * 100));
+        if (razorpayOrder?.id) {
+          order.payment.gatewayOrderId = razorpayOrder.id;
+          await order.save();
+        }
       } catch (err) {
         console.error("Razorpay order create failed:", err.message || err);
       }
@@ -166,7 +182,7 @@ exports.createOrder = async (req, res) => {
     await cart.save();
 
     global.io?.to(`kitchen_${order.partner}`).emit("new_order", order);
-    emitOrderStatusUpdate(order, "ORDER_RECEIVED");
+    emitCustomerStatusFromOrder(order);
     await notifyPartner({
       partnerId: order.partner,
       type: "NEW_ORDER",
@@ -190,8 +206,8 @@ exports.kitchenAction = async (req, res) => {
     if (!isValidObjectId(orderId)) {
       return apiError(res, 400, "INVALID_ORDER_ID", "orderId must be a valid id");
     }
-    if (!["ACCEPT", "REJECT"].includes(action)) {
-      return apiError(res, 400, "INVALID_ACTION", "action must be ACCEPT or REJECT");
+    if (!["ACCEPT", "PREPARING", "READY", "REJECT"].includes(action)) {
+      return apiError(res, 400, "INVALID_ACTION", "action must be ACCEPT, PREPARING, READY or REJECT");
     }
 
     const order = await Order.findById(orderId);
@@ -200,22 +216,59 @@ exports.kitchenAction = async (req, res) => {
       return apiError(res, 403, "ROLE_NOT_ALLOWED", "Only assigned kitchen partner can perform this action");
     }
 
+    if (order.status === "CANCELLED" || order.status === "DELIVERED") {
+      return apiError(res, 409, "ORDER_ALREADY_CLOSED", "Closed orders cannot be updated");
+    }
+
+    if (order.payment?.method === "ONLINE" && order.payment?.paymentStatus !== "PAID" && action !== "REJECT") {
+      return apiError(res, 409, "PAYMENT_PENDING", "Online payment must be confirmed before kitchen processing");
+    }
+
     if (action === "ACCEPT") {
+      if (order.status !== "PLACED") {
+        return apiError(res, 409, "INVALID_ORDER_STATE", "Only placed orders can be accepted");
+      }
       order.status = "ACCEPTED";
       order.timeline.acceptedAt = new Date();
       await order.save();
 
       global.io?.to(`user_${order.user}`).emit("order_accepted", order);
-      emitOrderStatusUpdate(order, "ACCEPTED");
-
-      order.timeline.preparingAt = new Date();
+      emitCustomerStatusFromOrder(order);
+    } else if (action === "PREPARING") {
+      if (!["ACCEPTED", "PREPARING"].includes(order.status)) {
+        return apiError(res, 409, "INVALID_ORDER_STATE", "Only accepted orders can move to preparing");
+      }
+      order.status = "PREPARING";
+      if (!order.timeline.acceptedAt) {
+        order.timeline.acceptedAt = new Date();
+      }
+      if (!order.timeline.preparingAt) {
+        order.timeline.preparingAt = new Date();
+      }
       await order.save();
-      emitOrderStatusUpdate(order, "PROCESSING");
+      global.io?.to(`user_${order.user}`).emit("order_preparing", order);
+      emitCustomerStatusFromOrder(order);
+    } else if (action === "READY") {
+      if (!["PREPARING", "READY"].includes(order.status)) {
+        return apiError(res, 409, "INVALID_ORDER_STATE", "Only preparing orders can move to ready");
+      }
+      order.status = "READY";
+      if (!order.timeline.preparingAt) {
+        order.timeline.preparingAt = new Date();
+      }
+      order.timeline.readyAt = new Date();
+      await order.save();
 
-      if (typeof assignDeliveryBoy === "function") {
+      global.io?.to(`user_${order.user}`).emit("order_ready", order);
+      emitCustomerStatusFromOrder(order);
+
+      if (!order.deliveryAgent && typeof assignDeliveryBoy === "function") {
         await assignDeliveryBoy(order);
       }
     } else {
+      if (!["PLACED", "ACCEPTED", "PREPARING", "READY"].includes(order.status)) {
+        return apiError(res, 409, "INVALID_ORDER_STATE", "Order cannot be rejected at current status");
+      }
       order.status = "CANCELLED";
       order.timeline.cancelledAt = new Date();
       await order.save();
@@ -231,7 +284,16 @@ exports.kitchenAction = async (req, res) => {
       }
 
       global.io?.to(`user_${order.user}`).emit("order_cancelled", order);
-      emitOrderStatusUpdate(order, "CANCELLED");
+      emitCustomerStatusFromOrder(order);
+
+      if (order.deliveryAgent) {
+        await DeliveryAgent.findByIdAndUpdate(order.deliveryAgent, {
+          $set: {
+            currentOrder: null,
+            isAvailable: true
+          }
+        });
+      }
     }
 
     return res.status(200).json({ message: "Action updated", order });
@@ -261,8 +323,8 @@ exports.deliveryAction = async (req, res) => {
       return apiError(res, 403, "DELIVERY_AGENT_MISMATCH", "Order is not assigned to this delivery agent");
     }
 
-    if (!["ACCEPTED", "READY"].includes(order.status)) {
-      return apiError(res, 409, "INVALID_ORDER_STATE", "Order is not ready for delivery");
+    if (order.status !== "READY") {
+      return apiError(res, 409, "INVALID_ORDER_STATE", "Only ready orders can start delivery");
     }
 
     order.status = "OUT_FOR_DELIVERY";
@@ -270,7 +332,7 @@ exports.deliveryAction = async (req, res) => {
     await order.save();
 
     global.io?.to(`user_${order.user}`).emit("delivery_started", order);
-    emitOrderStatusUpdate(order, "ON_ROUTE");
+    emitCustomerStatusFromOrder(order);
 
     return res.status(200).json({ message: "Delivery started", order });
   } catch (error) {
@@ -302,8 +364,7 @@ exports.markDelivered = async (req, res) => {
     }
 
     order.status = "DELIVERED";
-    // If payment method is ONLINE, keep paymentStatus as PENDING until client confirms payment
-    if (order.payment?.method !== "ONLINE") {
+    if (order.payment?.method === "COD") {
       order.payment = order.payment || {};
       order.payment.paymentStatus = "PAID";
     }
@@ -311,12 +372,17 @@ exports.markDelivered = async (req, res) => {
 
     await order.save();
 
-    global.io?.to(`user_${order.user}`).emit("order_delivered", order);
-    emitOrderStatusUpdate(order, "DELIVERED");
-
-    if (order.payment?.method === "ONLINE") {
-      global.io?.to(`user_${order.user}`).emit("payment_required", { orderId: order._id, amount: order.priceDetails?.totalAmount || 0 });
+    if (order.deliveryAgent) {
+      await DeliveryAgent.findByIdAndUpdate(order.deliveryAgent, {
+        $set: {
+          currentOrder: null,
+          isAvailable: true
+        }
+      });
     }
+
+    global.io?.to(`user_${order.user}`).emit("order_delivered", order);
+    emitCustomerStatusFromOrder(order);
 
     return res.status(200).json({ message: "Order delivered successfully" });
   } catch (error) {
@@ -346,8 +412,14 @@ exports.confirmPayment = async (req, res) => {
     if (String(order.user) !== String(actorId)) {
       return apiError(res, 403, "ORDER_OWNERSHIP_REQUIRED", "You can only confirm payment for your own order");
     }
+    if (order.payment?.method !== "ONLINE") {
+      return apiError(res, 409, "INVALID_PAYMENT_METHOD", "Only online orders require payment confirmation");
+    }
+    if (order.status === "CANCELLED") {
+      return apiError(res, 409, "ORDER_CANCELLED", "Cancelled orders cannot be paid");
+    }
 
-    const existingPaymentId = order.payment?.details?.razorpay_payment_id;
+    const existingPaymentId = order.payment?.gatewayPaymentId;
     if (order.payment?.paymentStatus === "PAID") {
       if (existingPaymentId && existingPaymentId !== razorpay_payment_id) {
         return apiError(res, 409, "PAYMENT_ALREADY_CONFIRMED", "Payment already confirmed with a different transaction id");
@@ -357,13 +429,23 @@ exports.confirmPayment = async (req, res) => {
 
     const valid = verifySignature({ razorpay_order_id, razorpay_payment_id, razorpay_signature });
     if (!valid) return apiError(res, 400, "INVALID_PAYMENT_SIGNATURE", "Invalid payment signature");
+    if (order.payment?.gatewayOrderId && order.payment.gatewayOrderId !== razorpay_order_id) {
+      return apiError(res, 409, "PAYMENT_GATEWAY_MISMATCH", "Razorpay order id mismatch");
+    }
 
     order.payment = order.payment || {};
     order.payment.paymentStatus = "PAID";
-    order.payment.details = { razorpay_payment_id, razorpay_order_id };
+    order.payment.gatewayOrderId = razorpay_order_id;
+    order.payment.gatewayPaymentId = razorpay_payment_id;
+    order.payment.gatewaySignature = razorpay_signature;
+    order.payment.transactionId = razorpay_payment_id;
     await order.save();
 
     global.io?.to(`user_${order.user}`).emit("payment_success", { orderId: order._id, paymentId: razorpay_payment_id });
+    global.io?.to(`kitchen_${order.partner}`).emit("payment_confirmed", {
+      orderId: order._id,
+      paymentId: razorpay_payment_id
+    });
 
     return res.json({ message: "Payment confirmed", order });
   } catch (error) {
@@ -491,7 +573,16 @@ exports.cancelMyOrder = async (req, res) => {
       data: { orderId: order._id, reason }
     });
     global.io?.to(`user_${order.user}`).emit("order_cancelled", order);
-    emitOrderStatusUpdate(order, "CANCELLED");
+    emitCustomerStatusFromOrder(order);
+
+    if (order.deliveryAgent) {
+      await DeliveryAgent.findByIdAndUpdate(order.deliveryAgent, {
+        $set: {
+          currentOrder: null,
+          isAvailable: true
+        }
+      });
+    }
 
     return res.status(200).json({
       message: "Order cancelled successfully",

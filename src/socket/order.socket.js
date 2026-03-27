@@ -1,49 +1,133 @@
+const jwt = require("jsonwebtoken");
 const { getIO } = require("./socket");
 const Order = require("../module/order.model");
 const Cart = require("../module/cart.model");
 const User = require("../module/user.model");
+const DeliveryAgent = require("../module/Delivery_Agent");
 const assignDeliveryBoy = require("../utils/deliveryAssignment");
 const { notifyPartner } = require("../utils/partnerNotification");
+const { createOrder } = require("../utils/razorpay");
 
-const emitOrderStatusUpdate = (io, order, status) => {
+const CUSTOMER_STATUS = {
+  PLACED: "ORDER_RECEIVED",
+  ACCEPTED: "ACCEPTED",
+  PREPARING: "PROCESSING",
+  READY: "READY_FOR_PICKUP",
+  OUT_FOR_DELIVERY: "ON_ROUTE",
+  DELIVERED: "DELIVERED",
+  CANCELLED: "CANCELLED"
+};
+
+const emitOrderStatusUpdate = (io, order) => {
   io.to(`user_${order.user}`).emit("order_status_update", {
     orderId: order._id,
-    status,
+    status: CUSTOMER_STATUS[order.status] || order.status,
     internalStatus: order.status,
     timeline: order.timeline
   });
+};
+
+const getSocketActor = async (socket) => {
+  if (socket.data.actor) return socket.data.actor;
+
+  const token = socket.handshake.auth?.token;
+  const role = socket.handshake.auth?.role;
+  if (!token || !role) return null;
+
+  try {
+    if (role === "USER") {
+      const decoded = jwt.verify(token, process.env.ACCESS_SECRET);
+      socket.data.actor = { role, id: decoded.id };
+      return socket.data.actor;
+    }
+
+    if (role === "PARTNER") {
+      const decoded = jwt.verify(token, process.env.ACCESS_SECRET);
+      socket.data.actor = { role, id: decoded.id };
+      return socket.data.actor;
+    }
+
+    if (role === "DELIVERY_AGENT") {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      socket.data.actor = { role, id: decoded.id };
+      return socket.data.actor;
+    }
+  } catch (error) {
+    return null;
+  }
+
+  return null;
+};
+
+const requireActor = async (socket, allowedRoles) => {
+  const actor = await getSocketActor(socket);
+  if (!actor || !allowedRoles.includes(actor.role)) {
+    return { error: { status: "error", message: "Unauthorized socket action" } };
+  }
+  return { actor };
 };
 
 const orderSocketHandler = () => {
   const io = getIO();
 
   io.on("connection", (socket) => {
-    console.log("🟢 New Socket Connected:", socket.id);
-
-    socket.on("join_user", (userId) => {
+    socket.on("join_user", async (userId, callback) => {
+      const { actor, error } = await requireActor(socket, ["USER"]);
+      if (error) return callback && callback(error);
+      if (String(actor.id) !== String(userId)) {
+        return callback && callback({ status: "error", message: "Cannot join another user room" });
+      }
       socket.join(`user_${userId}`);
-      console.log(`👤 User joined room: user_${userId}`);
+      callback && callback({ status: "ok" });
     });
 
-    socket.on("join_kitchen", (kitchenId) => {
+    socket.on("join_kitchen", async (kitchenId, callback) => {
+      const { actor, error } = await requireActor(socket, ["PARTNER"]);
+      if (error) return callback && callback(error);
+      if (String(actor.id) !== String(kitchenId)) {
+        return callback && callback({ status: "error", message: "Cannot join another kitchen room" });
+      }
       socket.join(`kitchen_${kitchenId}`);
-      console.log(`🍽 Kitchen joined room: kitchen_${kitchenId}`);
+      callback && callback({ status: "ok" });
     });
 
-    socket.on("join_delivery", (deliveryId) => {
+    socket.on("join_delivery", async (deliveryId, callback) => {
+      const { actor, error } = await requireActor(socket, ["DELIVERY_AGENT"]);
+      if (error) return callback && callback(error);
+      if (String(actor.id) !== String(deliveryId)) {
+        return callback && callback({ status: "error", message: "Cannot join another delivery room" });
+      }
       socket.join(`delivery_${deliveryId}`);
-      console.log(`🚴 Delivery joined room: delivery_${deliveryId}`);
+      callback && callback({ status: "ok" });
     });
 
-    socket.on("join_order", (orderId) => {
+    socket.on("join_order", async (orderId, callback) => {
+      const { actor, error } = await requireActor(socket, ["USER", "PARTNER", "DELIVERY_AGENT"]);
+      if (error) return callback && callback(error);
+
+      const query =
+        actor.role === "USER"
+          ? { _id: orderId, user: actor.id }
+          : actor.role === "PARTNER"
+            ? { _id: orderId, partner: actor.id }
+            : { _id: orderId, deliveryAgent: actor.id };
+
+      const order = await Order.findOne(query).select("_id");
+      if (!order) {
+        return callback && callback({ status: "error", message: "Order room access denied" });
+      }
+
       socket.join(`order_${orderId}`);
-      console.log(`📦 Joined order room: order_${orderId}`);
+      callback && callback({ status: "ok" });
     });
 
-    // Create order via socket
     socket.on("create_order", async (payload, callback) => {
       try {
-        const { userId, addressId, paymentMethod = 'COD' } = payload || {};
+        const { actor, error } = await requireActor(socket, ["USER"]);
+        if (error) return callback && callback(error);
+
+        const { addressId, paymentMethod = "COD" } = payload || {};
+        const userId = actor.id;
 
         const cart = await Cart.findOne({ userId });
         if (!cart || cart.items.length === 0) {
@@ -56,10 +140,13 @@ const orderSocketHandler = () => {
           return callback && callback({ status: "error", message: "Invalid address" });
         }
 
-        // Wallet deduction
-        if (paymentMethod === 'WALLET') {
+        if (!["COD", "ONLINE", "WALLET"].includes(paymentMethod)) {
+          return callback && callback({ status: "error", message: "Invalid payment method" });
+        }
+
+        if (paymentMethod === "WALLET") {
           if ((user.walletBalance || 0) < cart.totalAmount) {
-            return callback && callback({ status: 'error', message: 'Insufficient wallet balance' });
+            return callback && callback({ status: "error", message: "Insufficient wallet balance" });
           }
           user.walletBalance = (user.walletBalance || 0) - cart.totalAmount;
           await user.save();
@@ -93,7 +180,7 @@ const orderSocketHandler = () => {
           },
           payment: {
             method: paymentMethod,
-            paymentStatus: paymentMethod === 'WALLET' ? 'PAID' : 'PENDING'
+            paymentStatus: paymentMethod === "WALLET" ? "PAID" : "PENDING"
           },
           status: "PLACED",
           timeline: {
@@ -101,12 +188,19 @@ const orderSocketHandler = () => {
           }
         });
 
+        let razorpayOrder = null;
+        if (paymentMethod === "ONLINE") {
+          razorpayOrder = await createOrder(Math.round((order.priceDetails?.totalAmount || 0) * 100));
+          order.payment.gatewayOrderId = razorpayOrder.id;
+          await order.save();
+        }
+
         cart.items = [];
         cart.totalAmount = 0;
         await cart.save();
 
         io.to(`kitchen_${order.partner}`).emit("new_order", order);
-        emitOrderStatusUpdate(io, order, "ORDER_RECEIVED");
+        emitOrderStatusUpdate(io, order);
         await notifyPartner({
           partnerId: order.partner,
           type: "NEW_ORDER",
@@ -115,146 +209,149 @@ const orderSocketHandler = () => {
           data: { orderId: order._id, status: order.status }
         });
 
-        // If online, create razorpay order and return to client (client can pay later)
-        let razorpayOrder = null;
-        if (paymentMethod === 'ONLINE') {
-          try {
-            const { createOrder } = require('../utils/razorpay');
-            razorpayOrder = await createOrder(Math.round((order.priceDetails?.totalAmount || 0) * 100));
-          } catch (err) {
-            console.error('Razorpay create order error:', err.message || err);
-          }
-        }
-
         callback && callback({ status: "ok", order, razorpayOrder });
       } catch (error) {
-        console.error("create_order error:", error);
         callback && callback({ status: "error", message: error.message });
       }
     });
 
-    // Kitchen actions via socket (ACCEPT / REJECT)
     socket.on("kitchen_action", async (payload, callback) => {
       try {
+        const { actor, error } = await requireActor(socket, ["PARTNER"]);
+        if (error) return callback && callback(error);
+
         const { orderId, action } = payload || {};
         const order = await Order.findById(orderId);
         if (!order) return callback && callback({ status: "error", message: "Order not found" });
-
-        if (action === "ACCEPT") {
-          order.status = "ACCEPTED";
-          order.timeline = order.timeline || {};
-          order.timeline.acceptedAt = new Date();
-          await order.save();
-
-          io.to(`user_${order.user}`).emit("order_accepted", order);
-          emitOrderStatusUpdate(io, order, "ACCEPTED");
-
-          order.timeline.preparingAt = new Date();
-          await order.save();
-          emitOrderStatusUpdate(io, order, "PROCESSING");
-
-          if (typeof assignDeliveryBoy === "function") {
-            await assignDeliveryBoy(order);
-          }
-        } else {
-          order.status = "CANCELLED";
-          order.timeline = order.timeline || {};
-          order.timeline.cancelledAt = new Date();
-          await order.save();
-
-          // Refund wallet if used
-          if (order.payment?.method === 'WALLET' && order.payment?.paymentStatus === 'PAID') {
-            const u = await User.findById(order.user);
-            if (u) {
-              u.walletBalance = (u.walletBalance || 0) + (order.priceDetails?.totalAmount || 0);
-              await u.save();
-              io.to(`user_${order.user}`).emit('wallet_refunded', { orderId: order._id, amount: order.priceDetails?.totalAmount || 0 });
-            }
-          }
-
-          io.to(`user_${order.user}`).emit("order_cancelled", order);
-          emitOrderStatusUpdate(io, order, "CANCELLED");
+        if (String(order.partner) !== String(actor.id)) {
+          return callback && callback({ status: "error", message: "Unauthorized kitchen action" });
         }
 
+        if (order.payment?.method === "ONLINE" && order.payment?.paymentStatus !== "PAID" && action !== "REJECT") {
+          return callback && callback({ status: "error", message: "Online payment must be confirmed first" });
+        }
+
+        if (action === "ACCEPT") {
+          if (order.status !== "PLACED") {
+            return callback && callback({ status: "error", message: "Only placed orders can be accepted" });
+          }
+          order.status = "ACCEPTED";
+          order.timeline.acceptedAt = new Date();
+          await order.save();
+          io.to(`user_${order.user}`).emit("order_accepted", order);
+        } else if (action === "PREPARING") {
+          if (!["ACCEPTED", "PREPARING"].includes(order.status)) {
+            return callback && callback({ status: "error", message: "Order cannot move to preparing" });
+          }
+          order.status = "PREPARING";
+          order.timeline.preparingAt = order.timeline.preparingAt || new Date();
+          await order.save();
+          io.to(`user_${order.user}`).emit("order_preparing", order);
+        } else if (action === "READY") {
+          if (!["PREPARING", "READY"].includes(order.status)) {
+            return callback && callback({ status: "error", message: "Order cannot move to ready" });
+          }
+          order.status = "READY";
+          order.timeline.readyAt = new Date();
+          await order.save();
+          io.to(`user_${order.user}`).emit("order_ready", order);
+          if (!order.deliveryAgent) {
+            await assignDeliveryBoy(order);
+          }
+        } else if (action === "REJECT") {
+          order.status = "CANCELLED";
+          order.timeline.cancelledAt = new Date();
+          await order.save();
+          io.to(`user_${order.user}`).emit("order_cancelled", order);
+        } else {
+          return callback && callback({ status: "error", message: "Invalid action" });
+        }
+
+        emitOrderStatusUpdate(io, order);
         callback && callback({ status: "ok", order });
       } catch (error) {
-        console.error("kitchen_action error:", error);
         callback && callback({ status: "error", message: error.message });
       }
     });
 
-    // Delivery starts (picked up)
     socket.on("delivery_start", async (payload, callback) => {
       try {
+        const { actor, error } = await requireActor(socket, ["DELIVERY_AGENT"]);
+        if (error) return callback && callback(error);
+
         const { orderId } = payload || {};
         const order = await Order.findById(orderId);
         if (!order) return callback && callback({ status: "error", message: "Order not found" });
+        if (!order.deliveryAgent || String(order.deliveryAgent) !== String(actor.id)) {
+          return callback && callback({ status: "error", message: "Order is not assigned to this driver" });
+        }
+        if (order.status !== "READY") {
+          return callback && callback({ status: "error", message: "Only ready orders can start delivery" });
+        }
 
         order.status = "OUT_FOR_DELIVERY";
-        order.timeline = order.timeline || {};
         order.timeline.pickedAt = new Date();
         await order.save();
 
         io.to(`user_${order.user}`).emit("delivery_started", order);
-        emitOrderStatusUpdate(io, order, "ON_ROUTE");
-
+        emitOrderStatusUpdate(io, order);
         callback && callback({ status: "ok", order });
       } catch (error) {
-        console.error("delivery_start error:", error);
         callback && callback({ status: "error", message: error.message });
       }
     });
 
-    // Mark delivered
     socket.on("mark_delivered", async (payload, callback) => {
       try {
+        const { actor, error } = await requireActor(socket, ["DELIVERY_AGENT"]);
+        if (error) return callback && callback(error);
+
         const { orderId } = payload || {};
         const order = await Order.findById(orderId);
         if (!order) return callback && callback({ status: "error", message: "Order not found" });
+        if (!order.deliveryAgent || String(order.deliveryAgent) !== String(actor.id)) {
+          return callback && callback({ status: "error", message: "Order is not assigned to this driver" });
+        }
+        if (order.status !== "OUT_FOR_DELIVERY") {
+          return callback && callback({ status: "error", message: "Only active delivery orders can be completed" });
+        }
 
         order.status = "DELIVERED";
-        order.payment = order.payment || {};
-        // Keep ONLINE payment as pending until client confirms
-        if (order.payment.method !== 'ONLINE') {
+        order.timeline.deliveredAt = new Date();
+        if (order.payment?.method === "COD") {
           order.payment.paymentStatus = "PAID";
         }
-        order.timeline = order.timeline || {};
-        order.timeline.deliveredAt = new Date();
-
         await order.save();
 
+        await DeliveryAgent.findByIdAndUpdate(actor.id, {
+          $set: {
+            currentOrder: null,
+            isAvailable: true
+          }
+        });
+
         io.to(`user_${order.user}`).emit("order_delivered", order);
-        emitOrderStatusUpdate(io, order, "DELIVERED");
-
-        if (order.payment?.method === 'ONLINE') {
-          io.to(`user_${order.user}`).emit('payment_required', { orderId: order._id, amount: order.priceDetails?.totalAmount || 0 });
-        }
-
+        emitOrderStatusUpdate(io, order);
         callback && callback({ status: "ok", order });
       } catch (error) {
-        console.error("mark_delivered error:", error);
         callback && callback({ status: "error", message: error.message });
       }
     });
-
-    socket.on("disconnect", () => {
-      console.log("🔴 Socket Disconnected:", socket.id);
-    });
   });
 };
-
-/* ================= EMIT FUNCTIONS ================= */
 
 const emitOrderPicked = (order) => {
   if (!order?.user) return;
   const io = getIO();
   io.to(`user_${order.user}`).emit("order_picked", order);
+  emitOrderStatusUpdate(io, order);
 };
 
 const emitOrderDelivered = (order) => {
   if (!order?.user) return;
   const io = getIO();
   io.to(`user_${order.user}`).emit("order_delivered", order);
+  emitOrderStatusUpdate(io, order);
 };
 
 const emitNewOrderToKitchen = (order) => {

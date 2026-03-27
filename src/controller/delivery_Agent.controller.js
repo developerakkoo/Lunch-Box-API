@@ -12,12 +12,42 @@ const {
 const { notifyDeliveryAgent } = require("../utils/deliveryNotification");
 
 const getDriverIdFromReq = (req) => req?.driver?.id;
+const ACTIVE_DELIVERY_STATUSES = ["READY", "OUT_FOR_DELIVERY"];
 
 const findAgentFromToken = async (driverId) => {
   if (!driverId) return null;
   const agent = await DeliveryAgent.findById(driverId);
   if (agent) return agent;
   return DeliveryAgent.findOne({ user: driverId });
+};
+
+const syncAgentAvailability = async (agent) => {
+  if (!agent) return null;
+
+  let hasActiveOrder = false;
+
+  if (agent.currentOrder) {
+    const currentOrder = await Order.findById(agent.currentOrder).select("status deliveryAgent");
+    hasActiveOrder = Boolean(
+      currentOrder &&
+      String(currentOrder.deliveryAgent) === String(agent._id) &&
+      ACTIVE_DELIVERY_STATUSES.includes(currentOrder.status)
+    );
+  }
+
+  const nextAvailability = !hasActiveOrder;
+  const nextCurrentOrder = hasActiveOrder ? agent.currentOrder : null;
+
+  if (
+    agent.isAvailable !== nextAvailability ||
+    String(agent.currentOrder || "") !== String(nextCurrentOrder || "")
+  ) {
+    agent.isAvailable = nextAvailability;
+    agent.currentOrder = nextCurrentOrder;
+    await agent.save();
+  }
+
+  return agent;
 };
 
 exports.registerDriver = async (req, res) => {
@@ -144,6 +174,11 @@ exports.toggleOnlineStatus = async (req, res) => {
 
     agent.isOnline = !agent.isOnline;
     if (agent.isOnline) {
+      await syncAgentAvailability(agent);
+    } else {
+      agent.isAvailable = false;
+    }
+    if (agent.isOnline) {
       agent.shift.startedAt = new Date();
     } else {
       agent.shift.endedAt = new Date();
@@ -174,7 +209,10 @@ exports.updateAvailabilityStatus = async (req, res) => {
     if (!agent) return res.status(404).json({ message: "Agent profile not found" });
 
     agent.isOnline = status === "ACTIVE";
-    agent.isAvailable = status === "ACTIVE" ? agent.isAvailable : false;
+    await syncAgentAvailability(agent);
+    if (!agent.isOnline) {
+      agent.isAvailable = false;
+    }
     if (agent.isOnline) {
       agent.shift.startedAt = new Date();
     } else {
@@ -274,14 +312,15 @@ exports.acceptOrder = async (req, res) => {
     const { orderId } = req.params;
     const agent = await findAgentFromToken(getDriverIdFromReq(req));
     if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    await syncAgentAvailability(agent);
 
     if (!agent.isOnline) return res.status(400).json({ message: "Agent offline" });
     if (!agent.isAvailable) return res.status(400).json({ message: "Already handling another order" });
 
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: "Order not found" });
-    if (!["ACCEPTED", "READY"].includes(order.status)) {
-      return res.status(400).json({ message: "Order not ready for delivery" });
+    if (order.status !== "READY") {
+      return res.status(400).json({ message: "Only ready orders can be accepted by driver" });
     }
 
     if (order.deliveryAgent && String(order.deliveryAgent) !== String(agent._id)) {
@@ -289,9 +328,6 @@ exports.acceptOrder = async (req, res) => {
     }
 
     order.deliveryAgent = agent._id;
-    order.status = "OUT_FOR_DELIVERY";
-    order.timeline = order.timeline || {};
-    order.timeline.pickedAt = new Date();
     await order.save();
 
     agent.currentOrder = order._id;
@@ -306,8 +342,14 @@ exports.acceptOrder = async (req, res) => {
       data: { orderId: order._id }
     });
 
-    global.io?.to(`user_${order.user}`).emit("delivery_started", order);
-    emitOrderPicked(order);
+    global.io?.to(`user_${order.user}`).emit("delivery_assigned", {
+      orderId: order._id,
+      deliveryAgentId: agent._id
+    });
+    global.io?.to(`kitchen_${order.partner}`).emit("delivery_assigned", {
+      orderId: order._id,
+      deliveryAgentId: agent._id
+    });
 
     return res.status(200).json({
       message: "Order accepted successfully",
@@ -376,12 +418,16 @@ exports.pickOrder = async (req, res) => {
     if (!order.deliveryAgent || String(order.deliveryAgent) !== String(agent._id)) {
       return res.status(403).json({ message: "Order is not assigned to this delivery agent" });
     }
+    if (order.status !== "READY") {
+      return res.status(400).json({ message: "Only ready orders can be picked" });
+    }
 
     order.status = "OUT_FOR_DELIVERY";
     order.timeline = order.timeline || {};
     order.timeline.pickedAt = new Date();
     await order.save();
 
+    global.io?.to(`user_${order.user}`).emit("delivery_started", order);
     emitOrderPicked(order);
 
     return res.status(200).json({
@@ -403,6 +449,9 @@ exports.completeOrder = async (req, res) => {
     if (!order) return res.status(404).json({ message: "Order not found" });
     if (!order.deliveryAgent || String(order.deliveryAgent) !== String(agent._id)) {
       return res.status(403).json({ message: "Order is not assigned to this delivery agent" });
+    }
+    if (order.status !== "OUT_FOR_DELIVERY") {
+      return res.status(400).json({ message: "Only out for delivery orders can be completed" });
     }
 
     order.status = "DELIVERED";

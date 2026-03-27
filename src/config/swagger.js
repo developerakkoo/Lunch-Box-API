@@ -284,7 +284,7 @@ const options = {
           properties: {
             action: {
               type: "string",
-              enum: ["ACCEPT", "REJECT"],
+              enum: ["ACCEPT", "PREPARING", "READY", "REJECT"],
               example: "ACCEPT"
             }
           }
