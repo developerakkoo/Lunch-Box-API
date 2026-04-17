@@ -1,16 +1,22 @@
 const Category = require("../module/category.model");
+const { resolveAccessibleHotel } = require("../utils/partnerAccess");
 
 
 // CREATE CATEGORY
 exports.createCategory = async (req, res) => {
   try {
     const { name, description, image } = req.body;
+    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
 
     const category = await Category.create({
       name,
       description,
       image,
-      partner: req.partner.id,
+      partner: selectedHotel._id,
     });
 
     res.status(201).json({
@@ -26,8 +32,14 @@ exports.createCategory = async (req, res) => {
 // GET ALL CATEGORIES (Partner Specific)
 exports.getCategories = async (req, res) => {
   try {
+    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
+
     const categories = await Category.find({
-      partner: req.partner.id,
+      partner: selectedHotel._id,
     }).sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -44,9 +56,14 @@ exports.getCategories = async (req, res) => {
 exports.updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
+    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
 
     const category = await Category.findOneAndUpdate(
-      { _id: id, partner: req.partner.id },
+      { _id: id, partner: selectedHotel._id },
       req.body,
       { new: true }
     );
@@ -69,10 +86,15 @@ exports.updateCategory = async (req, res) => {
 exports.deleteCategory = async (req, res) => {
   try {
     const { id } = req.params;
+    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
 
     const category = await Category.findOneAndDelete({
       _id: id,
-      partner: req.partner.id,
+      partner: selectedHotel._id,
     });
 
     if (!category) {

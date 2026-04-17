@@ -7,6 +7,7 @@ const DeliveryAgent = require("../module/Delivery_Agent");
 const assignDeliveryBoy = require("../utils/deliveryAssignment");
 const { notifyPartner } = require("../utils/partnerNotification");
 const { createOrder } = require("../utils/razorpay");
+const { getManagedHotelIds } = require("../utils/partnerAccess");
 
 const CUSTOMER_STATUS = {
   PLACED: "ORDER_RECEIVED",
@@ -84,7 +85,8 @@ const orderSocketHandler = () => {
     socket.on("join_kitchen", async (kitchenId, callback) => {
       const { actor, error } = await requireActor(socket, ["PARTNER"]);
       if (error) return callback && callback(error);
-      if (String(actor.id) !== String(kitchenId)) {
+      const { hotelIds } = await getManagedHotelIds(actor.id);
+      if (!hotelIds.includes(String(kitchenId))) {
         return callback && callback({ status: "error", message: "Cannot join another kitchen room" });
       }
       socket.join(`kitchen_${kitchenId}`);
@@ -109,7 +111,7 @@ const orderSocketHandler = () => {
         actor.role === "USER"
           ? { _id: orderId, user: actor.id }
           : actor.role === "PARTNER"
-            ? { _id: orderId, partner: actor.id }
+            ? { _id: orderId, partner: { $in: (await getManagedHotelIds(actor.id)).hotelIds } }
             : { _id: orderId, deliveryAgent: actor.id };
 
       const order = await Order.findOne(query).select("_id");
@@ -223,7 +225,8 @@ const orderSocketHandler = () => {
         const { orderId, action } = payload || {};
         const order = await Order.findById(orderId);
         if (!order) return callback && callback({ status: "error", message: "Order not found" });
-        if (String(order.partner) !== String(actor.id)) {
+        const { hotelIds } = await getManagedHotelIds(actor.id);
+        if (!hotelIds.includes(String(order.partner))) {
           return callback && callback({ status: "error", message: "Unauthorized kitchen action" });
         }
 

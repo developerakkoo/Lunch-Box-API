@@ -8,6 +8,7 @@ const { createOrder: createRazorOrder, verifySignature } = require("../utils/raz
 const { createPaymentIntent, retrievePaymentIntent } = require("../utils/stripe");
 const assignDeliveryBoy = require("../utils/deliveryAssignment");
 const { notifyPartner } = require("../utils/partnerNotification");
+const { getManagedHotelIds } = require("../utils/partnerAccess");
 const mongoose = require("mongoose");
 
 const CUSTOMER_STATUS = {
@@ -212,7 +213,8 @@ exports.kitchenAction = async (req, res) => {
 
     const order = await Order.findById(orderId);
     if (!order) return apiError(res, 404, "ORDER_NOT_FOUND", "Order not found");
-    if (actorRole !== "PARTNER" || String(order.partner) !== String(actorId)) {
+    const { hotelIds } = await getManagedHotelIds(actorId);
+    if (actorRole !== "PARTNER" || !hotelIds.includes(String(order.partner))) {
       return apiError(res, 403, "ROLE_NOT_ALLOWED", "Only assigned kitchen partner can perform this action");
     }
 

@@ -1,16 +1,22 @@
 const MenuItem = require('../module/menuItem.model')
 const Category = require('../module/category.model')
+const { resolveAccessibleHotel } = require("../utils/partnerAccess");
 
 // CREATE MENU ITEM
 exports.createMenuItem = async (req, res) => {
   try {
     const { name, description, price, discountPrice, images, isVeg, category } =
       req.body
+    const { selectedHotel, error } = await resolveAccessibleHotel(req)
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message })
+    }
 
     // Validate category belongs to partner
     const categoryExists = await Category.findOne({
       _id: category,
-      partner: req.partner.id
+      partner: selectedHotel._id
     })
 
     if (!categoryExists) {
@@ -25,7 +31,7 @@ exports.createMenuItem = async (req, res) => {
       images,
       isVeg,
       category,
-      partner: req.partner.id
+      partner: selectedHotel._id
     })
 
     res.status(201).json({
@@ -40,12 +46,17 @@ exports.createMenuItem = async (req, res) => {
 exports.bulkCreateMenuItems = async (req, res) => {
   try {
     const { items } = req.body
+    const { selectedHotel, error } = await resolveAccessibleHotel(req)
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message })
+    }
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: 'Items array is required' })
     }
 
-    const partnerId = req.partner.id
+    const partnerId = selectedHotel._id
 
     // Get all unique category IDs
     const categoryIds = [...new Set(items.map(item => item.category))]
@@ -89,8 +100,14 @@ exports.bulkCreateMenuItems = async (req, res) => {
 // GET MENU ITEMS
 exports.getMenuItems = async (req, res) => {
   try {
+    const { selectedHotel, error } = await resolveAccessibleHotel(req)
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message })
+    }
+
     const menuItems = await MenuItem.find({
-      partner: req.partner.id
+      partner: selectedHotel._id
     }).populate('category', 'name')
 
     res.status(200).json({
@@ -106,9 +123,14 @@ exports.getMenuItems = async (req, res) => {
 exports.updateMenuItem = async (req, res) => {
   try {
     const { id } = req.params
+    const { selectedHotel, error } = await resolveAccessibleHotel(req)
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message })
+    }
 
     const menu = await MenuItem.findOneAndUpdate(
-      { _id: id, partner: req.partner.id },
+      { _id: id, partner: selectedHotel._id },
       req.body,
       { new: true }
     )
@@ -130,10 +152,15 @@ exports.updateMenuItem = async (req, res) => {
 exports.deleteMenuItem = async (req, res) => {
   try {
     const { id } = req.params
+    const { selectedHotel, error } = await resolveAccessibleHotel(req)
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message })
+    }
 
     const menu = await MenuItem.findOneAndDelete({
       _id: id,
-      partner: req.partner.id
+      partner: selectedHotel._id
     })
 
     if (!menu) {
@@ -152,9 +179,15 @@ exports.deleteMenuItem = async (req, res) => {
 exports.toggleMenuItemStatus = async (req, res) => {
   try {
     const { id } = req.params
+    const { selectedHotel, error } = await resolveAccessibleHotel(req)
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message })
+    }
+
     const menu = await MenuItem.findOne({
       _id: id,
-      partner: req.partner.id
+      partner: selectedHotel._id
     })
 
     if (!menu) {

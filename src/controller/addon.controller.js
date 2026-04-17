@@ -1,16 +1,22 @@
 const AddonCategory = require("../module/addonCategory.model");
 const AddonItem = require("../module/addonItem.model");
 const MenuItem = require("../module/menuItem.model");
+const { resolveAccessibleHotel } = require("../utils/partnerAccess");
 
 
 // CREATE ADDON CATEGORY
 exports.createAddonCategory = async (req, res) => {
   try {
     const { name, isRequired, maxSelection, menuItem } = req.body;
+    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
 
     const menuExists = await MenuItem.findOne({
       _id: menuItem,
-      partner: req.partner.id,
+      partner: selectedHotel._id,
     });
 
     if (!menuExists) {
@@ -22,7 +28,7 @@ exports.createAddonCategory = async (req, res) => {
       isRequired,
       maxSelection,
       menuItem,
-      partner: req.partner.id,
+      partner: selectedHotel._id,
     });
 
     res.status(201).json({
@@ -41,10 +47,15 @@ exports.createAddonCategory = async (req, res) => {
 exports.createAddonItem = async (req, res) => {
   try {
     const { name, price, addonCategory } = req.body;
+    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
 
     const categoryExists = await AddonCategory.findOne({
       _id: addonCategory,
-      partner: req.partner.id,
+      partner: selectedHotel._id,
     });
 
     if (!categoryExists) {
@@ -55,7 +66,7 @@ exports.createAddonItem = async (req, res) => {
       name,
       price,
       addonCategory,
-      partner: req.partner.id,
+      partner: selectedHotel._id,
     });
 
     res.status(201).json({
@@ -73,8 +84,14 @@ exports.createAddonItem = async (req, res) => {
 // GET ADDON CATEGORIES
 exports.getAddonCategories = async (req, res) => {
   try {
+    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
+
     const categories = await AddonCategory.find({
-      partner: req.partner.id,
+      partner: selectedHotel._id,
     }).populate("menuItem", "name");
 
     res.status(200).json({
@@ -91,8 +108,14 @@ exports.getAddonCategories = async (req, res) => {
 // GET ADDON ITEMS
 exports.getAddonItems = async (req, res) => {
   try {
+    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
+
     const items = await AddonItem.find({
-      partner: req.partner.id,
+      partner: selectedHotel._id,
     }).populate("addonCategory", "name");
 
     res.status(200).json({
@@ -110,10 +133,15 @@ exports.getAddonItems = async (req, res) => {
 exports.deleteAddonItem = async (req, res) => {
   try {
     const { id } = req.params;
+    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
 
     await AddonItem.findOneAndDelete({
       _id: id,
-      partner: req.partner.id,
+      partner: selectedHotel._id,
     });
 
     res.json({ message: "Addon deleted" });

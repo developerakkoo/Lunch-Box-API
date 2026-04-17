@@ -3,6 +3,12 @@ const bcrypt = require("bcryptjs");
 
 const partnerSchema = new mongoose.Schema(
   {
+    ownerPartner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Partner",
+      default: null
+    },
+
     kitchenName: {
       type: String,
       required: true
@@ -15,13 +21,18 @@ const partnerSchema = new mongoose.Schema(
 
     email: {
       type: String,
-      required: true,
-      unique: true
+      required: function () {
+        return !this.ownerPartner;
+      },
+      default: undefined
     },
 
     password: {
       type: String,
-      required: true
+      required: function () {
+        return !this.ownerPartner;
+      },
+      default: undefined
     },
 
     phone: String,
@@ -45,6 +56,16 @@ const partnerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+partnerSchema.index(
+  { email: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      email: { $type: "string" }
+    }
+  }
+);
+
 
 // 🔐 Hash Password Before Save
 partnerSchema.pre("save", async function () {
@@ -58,6 +79,7 @@ partnerSchema.pre("save", async function () {
 
 // 🔐 Compare Password
 partnerSchema.methods.comparePassword = async function (password) {
+  if (!this.password) return false;
   return bcrypt.compare(password, this.password);
 };
 

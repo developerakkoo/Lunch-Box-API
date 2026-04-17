@@ -56,6 +56,60 @@ router.post('/login', controller.loginPartner)
 
 /**
  * @swagger
+ * /api/partner/hotels:
+ *   post:
+ *     summary: Create a new hotel for the logged-in partner
+ *     tags: [Partner]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [kitchenName]
+ *             properties:
+ *               kitchenName:
+ *                 type: string
+ *                 example: "Spicy House Baner22"
+ *               ownerName:
+ *                 type: string
+ *                 example: "Rahul"
+ *               phone:
+ *                 type: string
+ *                 example: "9876543211"
+ *               address:
+ *                 type: string
+ *                 example: "Baner, Pune"
+ *               latitude:
+ *                 type: number
+ *                 example: 18.559
+ *               longitude:
+ *                 type: number
+ *                 example: 73.7868
+ *     responses:
+ *       201:
+ *         description: Hotel created successfully
+ */
+router.post('/hotels', auth, controller.createHotel)
+
+/**
+ * @swagger
+ * /api/partner/hotels:
+ *   get:
+ *     summary: List all hotels managed by the logged-in partner
+ *     tags: [Partner]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Hotels fetched successfully
+ */
+router.get('/hotels', auth, controller.getManagedHotels)
+
+/**
+ * @swagger
  * /api/partner/dashboard:
  *   get:
  *     summary: Partner Dashboard

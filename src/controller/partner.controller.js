@@ -8,6 +8,11 @@ const Order = require("../module/order.model");
 const UserSubscription = require("../module/userSubscription.model");
 const SubscriptionDelivery = require("../module/subscriptionDelivery.model");
 const PartnerNotification = require("../module/partnerNotification.model");
+const {
+  getManagedHotels: fetchManagedHotels,
+  getManagedHotelIds,
+  resolveAccessibleHotel
+} = require("../utils/partnerAccess");
 // const Review = require("../module/review.model");
 
 
@@ -44,7 +49,8 @@ exports.registerPartner = async (req, res) => {
 
     res.status(201).json({
       message: "Partner registered successfully",
-      data: partner
+      data: partner,
+      hotels: [partner]
     });
 
   } catch (error) {
@@ -78,11 +84,13 @@ exports.loginPartner = async (req, res) => {
     }
 
     const token = generateToken(partner);
+    const { hotels } = await fetchManagedHotels(partner._id);
 
     res.json({
       message: "Login successful",
       token,
-      partner
+      partner,
+      hotels
     });
 
   } catch (error) {
@@ -95,7 +103,13 @@ exports.getDashboardStats = async (req, res) => {
 
   try {
 
-    const partnerId = req.partner.id;
+    const { selectedHotel, hotels, error } = await resolveAccessibleHotel(req);
+
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
+
+    const partnerId = selectedHotel._id;
 
     /* ---------- BASIC COUNTS ---------- */
 
@@ -208,6 +222,8 @@ exports.getDashboardStats = async (req, res) => {
     ]);
 
     res.json({
+      hotel: selectedHotel,
+      hotels,
       totalCategories,
       totalMenuItems,
       totalAddonCategories,
@@ -229,7 +245,12 @@ exports.getDashboardStats = async (req, res) => {
 exports.getOrdersByStatus = async (req, res) => {
   try {
 
-    const partnerId = req.partner.id;
+    const { selectedHotel, hotels, error } = await resolveAccessibleHotel(req);
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
+
+    const partnerId = selectedHotel._id;
     const { status = "NEW" } = req.query;
 
     const statusMap = {
@@ -248,7 +269,11 @@ exports.getOrdersByStatus = async (req, res) => {
     .populate("items.menuItem", "name price image")
     .sort({ createdAt: -1 });
 
-    res.json(orders);
+    res.json({
+      hotel: selectedHotel,
+      hotels,
+      data: orders
+    });
 
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -258,8 +283,11 @@ exports.getOrdersByStatus = async (req, res) => {
 
 exports.updateKitchenStatus = async (req, res) => {
   try {
+    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
 
-    const partnerId = req.partner.id; // from partnerAuth middleware
     const { status } = req.body;
 
     if (!["ACTIVE", "INACTIVE"].includes(status)) {
@@ -268,7 +296,7 @@ exports.updateKitchenStatus = async (req, res) => {
       });
     }
 
-    const partner = await Partner.findById(partnerId);
+    const partner = await Partner.findById(selectedHotel._id);
 
     if (!partner) {
       return res.status(404).json({ message: "Partner not found" });
@@ -291,7 +319,12 @@ exports.updateKitchenStatus = async (req, res) => {
 
 exports.getSubscriptionOrdersByStatus = async (req, res) => {
   try {
-    const partnerId = req.partner.id;
+    const { selectedHotel, hotels, error } = await resolveAccessibleHotel(req);
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
+
+    const partnerId = selectedHotel._id;
     const { status = "NEW", page = 1, limit = 20 } = req.query;
 
     const statusMap = {
@@ -334,6 +367,8 @@ exports.getSubscriptionOrdersByStatus = async (req, res) => {
 
     return res.status(200).json({
       message: "Subscription orders fetched successfully",
+      hotel: selectedHotel,
+      hotels,
       pagination: {
         page: pageNumber,
         limit: limitNumber,
@@ -348,7 +383,16 @@ exports.getSubscriptionOrdersByStatus = async (req, res) => {
 
 exports.getPartnerProfile = async (req, res) => {
   try {
-    const partner = await Partner.findById(req.partner.id).select(
+    const { selectedHotel, hotels, ownerPartnerId, error } = await resolveAccessibleHotel(req);
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
+
+    const partner = await Partner.findById(selectedHotel._id).select(
+      "ownerPartner kitchenName ownerName email phone address latitude longitude isActive status createdAt updatedAt"
+    );
+
+    const owner = await Partner.findById(ownerPartnerId).select(
       "kitchenName ownerName email phone address latitude longitude isActive status"
     );
 
@@ -358,7 +402,9 @@ exports.getPartnerProfile = async (req, res) => {
 
     return res.status(200).json({
       message: "Profile fetched successfully",
-      data: partner
+      owner,
+      selectedHotel: partner,
+      hotels
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -384,8 +430,13 @@ exports.updatePartnerProfile = async (req, res) => {
     if (latitude !== undefined) updatePayload.latitude = latitude;
     if (longitude !== undefined) updatePayload.longitude = longitude;
 
+    const { selectedHotel, hotels, error } = await resolveAccessibleHotel(req);
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
+
     const partner = await Partner.findByIdAndUpdate(
-      req.partner.id,
+      selectedHotel._id,
       { $set: updatePayload },
       { new: true }
     ).select("kitchenName ownerName email phone address latitude longitude isActive status");
@@ -396,7 +447,8 @@ exports.updatePartnerProfile = async (req, res) => {
 
     return res.status(200).json({
       message: "Profile updated successfully",
-      data: partner
+      data: partner,
+      hotels
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -406,10 +458,11 @@ exports.updatePartnerProfile = async (req, res) => {
 exports.getDeliveryContactForOrder = async (req, res) => {
   try {
     const { orderId } = req.params;
+    const { hotelIds } = await getManagedHotelIds(req.partner.id);
 
     const order = await Order.findOne({
       _id: orderId,
-      partner: req.partner.id
+      partner: { $in: hotelIds }
     }).populate("deliveryAgent", "fullName mobileNumber");
 
     if (!order) {
@@ -438,16 +491,26 @@ exports.getDeliveryContactForOrder = async (req, res) => {
 exports.getPartnerNotifications = async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
+    const { hotelIds } = await getManagedHotelIds(req.partner.id);
+    const requestedHotelId = req.query.hotelId;
+
+    if (requestedHotelId && !hotelIds.includes(String(requestedHotelId))) {
+      return res.status(403).json({ message: "You do not have access to this hotel" });
+    }
+
+    const notificationFilter = {
+      partnerId: requestedHotelId ? requestedHotelId : { $in: hotelIds }
+    };
     const pageNumber = Math.max(Number(page) || 1, 1);
     const limitNumber = Math.max(Number(limit) || 20, 1);
 
     const [notifications, total, unreadCount] = await Promise.all([
-      PartnerNotification.find({ partnerId: req.partner.id })
+      PartnerNotification.find(notificationFilter)
         .sort({ createdAt: -1 })
         .skip((pageNumber - 1) * limitNumber)
         .limit(limitNumber),
-      PartnerNotification.countDocuments({ partnerId: req.partner.id }),
-      PartnerNotification.countDocuments({ partnerId: req.partner.id, isRead: false })
+      PartnerNotification.countDocuments(notificationFilter),
+      PartnerNotification.countDocuments({ ...notificationFilter, isRead: false })
     ]);
 
     return res.status(200).json({
@@ -468,8 +531,9 @@ exports.getPartnerNotifications = async (req, res) => {
 exports.markNotificationRead = async (req, res) => {
   try {
     const { notificationId } = req.params;
+    const { hotelIds } = await getManagedHotelIds(req.partner.id);
     const notification = await PartnerNotification.findOneAndUpdate(
-      { _id: notificationId, partnerId: req.partner.id },
+      { _id: notificationId, partnerId: { $in: hotelIds } },
       { $set: { isRead: true } },
       { new: true }
     );
@@ -489,13 +553,82 @@ exports.markNotificationRead = async (req, res) => {
 
 exports.markAllNotificationsRead = async (req, res) => {
   try {
+    const { hotelIds } = await getManagedHotelIds(req.partner.id);
+    const requestedHotelId = req.query.hotelId;
+
+    if (requestedHotelId && !hotelIds.includes(String(requestedHotelId))) {
+      return res.status(403).json({ message: "You do not have access to this hotel" });
+    }
+
     await PartnerNotification.updateMany(
-      { partnerId: req.partner.id, isRead: false },
+      requestedHotelId
+        ? { partnerId: requestedHotelId, isRead: false }
+        : { partnerId: { $in: hotelIds }, isRead: false },
       { $set: { isRead: true } }
     );
 
     return res.status(200).json({
       message: "All notifications marked as read"
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.createHotel = async (req, res) => {
+  try {
+    const {
+      kitchenName,
+      ownerName,
+      phone,
+      address,
+      latitude,
+      longitude
+    } = req.body || {};
+
+    if (!kitchenName) {
+      return res.status(400).json({ message: "kitchenName is required" });
+    }
+
+    const owner = await Partner.findById(req.partner.id).select("ownerName");
+
+    if (!owner) {
+      return res.status(404).json({ message: "Partner not found" });
+    }
+
+    const hotel = await Partner.create({
+      ownerPartner: req.partner.id,
+      kitchenName,
+      ownerName: ownerName || owner.ownerName,
+      phone,
+      address,
+      latitude,
+      longitude
+    });
+
+    const { hotels } = await fetchManagedHotels(req.partner.id);
+
+    return res.status(201).json({
+      message: "Hotel created successfully",
+      data: hotel,
+      hotels
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getManagedHotels = async (req, res) => {
+  try {
+    const { ownerPartnerId, hotels } = await fetchManagedHotels(req.partner.id);
+    const owner = await Partner.findById(ownerPartnerId).select(
+      "kitchenName ownerName email phone"
+    );
+
+    return res.status(200).json({
+      message: "Hotels fetched successfully",
+      owner,
+      data: hotels
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
