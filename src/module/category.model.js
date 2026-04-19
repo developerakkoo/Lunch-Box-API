@@ -22,7 +22,7 @@ const categorySchema = new mongoose.Schema(
     partner: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Partner",
-      required: true,
+      default: null,
     },
   },
   { timestamps: true }

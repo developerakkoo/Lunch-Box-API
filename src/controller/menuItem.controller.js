@@ -1,6 +1,8 @@
 const MenuItem = require('../module/menuItem.model')
 const Category = require('../module/category.model')
-const { resolveAccessibleHotel } = require("../utils/partnerAccess");
+const {
+  resolveAccessibleHotel
+} = require("../utils/partnerAccess");
 
 // CREATE MENU ITEM
 exports.createMenuItem = async (req, res) => {
@@ -13,14 +15,19 @@ exports.createMenuItem = async (req, res) => {
       return res.status(error.status).json({ message: error.message })
     }
 
-    // Validate category belongs to partner
-    const categoryExists = await Category.findOne({
-      _id: category,
-      partner: selectedHotel._id
-    })
+    const categoryExists = await Category.findById(category)
 
     if (!categoryExists) {
       return res.status(404).json({ message: 'Category not found' })
+    }
+
+    const categoryOwner = categoryExists.partner;
+    const selectedHotelId = String(selectedHotel._id);
+
+    if (categoryOwner && String(categoryOwner) !== selectedHotelId) {
+      return res.status(403).json({
+        message: 'Category does not belong to the selected hotel'
+      })
     }
 
     const menu = await MenuItem.create({
@@ -56,20 +63,27 @@ exports.bulkCreateMenuItems = async (req, res) => {
       return res.status(400).json({ message: 'Items array is required' })
     }
 
-    const partnerId = selectedHotel._id
-
     // Get all unique category IDs
     const categoryIds = [...new Set(items.map(item => item.category))]
 
     // Validate categories
     const categories = await Category.find({
-      _id: { $in: categoryIds },
-      partner: partnerId
+      _id: { $in: categoryIds }
     })
 
     if (categories.length !== categoryIds.length) {
       return res.status(400).json({
-        message: 'Some categories are invalid or do not belong to this partner'
+        message: 'Some categories are invalid'
+      })
+    }
+
+    const invalidCategory = categories.find(
+      (item) => item.partner && String(item.partner) !== String(selectedHotel._id)
+    )
+
+    if (invalidCategory) {
+      return res.status(403).json({
+        message: 'One or more categories do not belong to the selected hotel'
       })
     }
 
@@ -82,7 +96,7 @@ exports.bulkCreateMenuItems = async (req, res) => {
       images: item.images || '',
       isVeg: item.isVeg ?? true,
       category: item.category,
-      partner: partnerId
+      partner: selectedHotel._id
     }))
 
     const result = await MenuItem.insertMany(menuItems)

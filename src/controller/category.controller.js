@@ -1,22 +1,88 @@
 const Category = require("../module/category.model");
-const { resolveAccessibleHotel } = require("../utils/partnerAccess");
+const {
+  isValidObjectId,
+  resolveAccessibleHotel
+} = require("../utils/partnerAccess");
+
+const getRequestedPartnerId = (req) =>
+  req.body?.partnerId ||
+  req.body?.hotelId ||
+  req.query?.partnerId ||
+  req.query?.hotelId ||
+  req.params?.partnerId ||
+  req.headers["x-hotel-id"];
+
+const sanitizeCategoryPayload = (body = {}) => {
+  const { partnerId, hotelId, ...payload } = body;
+
+  return payload;
+};
+
+const resolveCategoryScope = async (req, { requirePartnerIdForAdmin = false } = {}) => {
+  if (req.admin) {
+    const partnerId = getRequestedPartnerId(req);
+
+    if (partnerId && !isValidObjectId(partnerId)) {
+      return {
+        error: {
+          status: 400,
+          message: "Invalid partner id"
+        }
+      };
+    }
+
+    if (requirePartnerIdForAdmin && !partnerId) {
+      return {
+        error: {
+          status: 400,
+          message: "partnerId is required"
+        }
+      };
+    }
+
+    return {
+      role: "admin",
+      partnerId: partnerId || null
+    };
+  }
+
+  const { selectedHotel, error } = await resolveAccessibleHotel(req);
+
+  if (error) {
+    return { error };
+  }
+
+  return {
+    role: "partner",
+    partnerId: selectedHotel._id,
+    selectedHotel
+  };
+};
 
 
 // CREATE CATEGORY
 exports.createCategory = async (req, res) => {
   try {
     const { name, description, image } = req.body;
-    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+    let partnerId = null;
 
-    if (error) {
-      return res.status(error.status).json({ message: error.message });
+    if (req.admin) {
+      partnerId = null;
+    } else {
+      const { selectedHotel, error } = await resolveAccessibleHotel(req);
+
+      if (error) {
+        return res.status(error.status).json({ message: error.message });
+      }
+
+      partnerId = selectedHotel._id;
     }
 
     const category = await Category.create({
       name,
       description,
       image,
-      partner: selectedHotel._id,
+      partner: partnerId,
     });
 
     res.status(201).json({
@@ -32,15 +98,23 @@ exports.createCategory = async (req, res) => {
 // GET ALL CATEGORIES (Partner Specific)
 exports.getCategories = async (req, res) => {
   try {
-    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+    const { role, partnerId, error } = await resolveCategoryScope(req);
 
     if (error) {
       return res.status(error.status).json({ message: error.message });
     }
 
-    const categories = await Category.find({
-      partner: selectedHotel._id,
-    }).sort({ createdAt: -1 });
+    const query = role === "partner"
+      ? {
+          $or: [{ partner: partnerId }, { partner: null }]
+        }
+      : partnerId
+        ? {
+            $or: [{ partner: partnerId }, { partner: null }]
+          }
+        : {};
+
+    const categories = await Category.find(query).sort({ createdAt: -1 });
 
     res.status(200).json({
       total: categories.length,
@@ -56,15 +130,21 @@ exports.getCategories = async (req, res) => {
 exports.updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+    const { role, partnerId, error } = await resolveCategoryScope(req);
 
     if (error) {
       return res.status(error.status).json({ message: error.message });
     }
 
+    const filter = role === "partner"
+      ? { _id: id, $or: [{ partner: partnerId }, { partner: null }] }
+      : partnerId
+        ? { _id: id, $or: [{ partner: partnerId }, { partner: null }] }
+        : { _id: id };
+
     const category = await Category.findOneAndUpdate(
-      { _id: id, partner: selectedHotel._id },
-      req.body,
+      filter,
+      sanitizeCategoryPayload(req.body),
       { new: true }
     );
 
@@ -86,15 +166,20 @@ exports.updateCategory = async (req, res) => {
 exports.deleteCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+    const { role, partnerId, error } = await resolveCategoryScope(req);
 
     if (error) {
       return res.status(error.status).json({ message: error.message });
     }
 
+    const filter = role === "partner"
+      ? { _id: id, $or: [{ partner: partnerId }, { partner: null }] }
+      : partnerId
+        ? { _id: id, $or: [{ partner: partnerId }, { partner: null }] }
+        : { _id: id };
+
     const category = await Category.findOneAndDelete({
-      _id: id,
-      partner: selectedHotel._id,
+      ...filter
     });
 
     if (!category) {

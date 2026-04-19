@@ -540,7 +540,9 @@ exports.getKitchenMenuForCustomer = async (req, res) => {
       return res.status(404).json({ message: "Kitchen not found" });
     }
 
-    const categories = await Category.find({ partner: kitchenId })
+    const categories = await Category.find({
+      $or: [{ partner: kitchenId }, { partner: null }]
+    })
       .select("name description image")
       .sort({ createdAt: -1 })
       .lean();

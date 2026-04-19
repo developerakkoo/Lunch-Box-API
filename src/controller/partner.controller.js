@@ -123,7 +123,7 @@ exports.getDashboardStats = async (req, res) => {
       totalCancelledOrders
     ] = await Promise.all([
 
-      Category.countDocuments({ partner: partnerId }),
+      Category.countDocuments({ $or: [{ partner: partnerId }, { partner: null }] }),
 
       MenuItem.countDocuments({ partner: partnerId }),
 

@@ -57,6 +57,7 @@ const createCart = require("./routes/cart.routes");
 const adminAuthRoutes = require("./routes/admin/admin.routes");
 const adminDashboardRoutes = require("./routes/admin/dashboard.routes");
 const adminBannerRoutes = require("./routes/admin/banner.routes");
+const adminCategoryRoutes = require("./routes/admin/category.routes");
 const adminKitchenRoutes = require("./routes/admin/kitchen.routes");
 const adminOrderRoutes = require("./routes/admin/order.routes");
 
@@ -88,6 +89,7 @@ app.use("/api/cart", createCart);
 app.use("/api/admin", adminAuthRoutes);
 app.use("/api/admin/dashboard", adminDashboardRoutes);
 app.use("/api/admin/banner", adminBannerRoutes);
+app.use("/api/admin/category", adminCategoryRoutes);
 app.use("/api/admin", adminKitchenRoutes);
 app.use("/api/admin", adminOrderRoutes);
 
