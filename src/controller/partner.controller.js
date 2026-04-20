@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Partner = require("../module/partner.model");
 const jwt = require("jsonwebtoken");
 const Category = require("../module/category.model");
@@ -19,6 +20,21 @@ const {
 const logger = require("../utils/logger");
 // const Review = require("../module/review.model");
 
+const ORDER_SEGMENT_STATUS_MAP = {
+  new: ["PLACED"],
+  ongoing: ["ACCEPTED", "PREPARING", "READY", "OUT_FOR_DELIVERY"],
+  completed: ["DELIVERED"],
+  cancelled: ["CANCELLED"]
+};
+
+/** Legacy query param `status` — NEW includes all pre-delivery active states (incl. OUT_FOR_DELIVERY). */
+const LEGACY_ORDER_STATUS_MAP = {
+  NEW: ["PLACED", "ACCEPTED", "PREPARING", "READY", "OUT_FOR_DELIVERY"],
+  CANCELLED: ["CANCELLED"],
+  COMPLETED: ["DELIVERED"]
+};
+
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
 const generateToken = (partner) => {
   return jwt.sign(
@@ -253,7 +269,11 @@ exports.getDashboardStats = async (req, res) => {
 
 exports.getOrdersByStatus = async (req, res) => {
   try {
-    logger.debug("Partner orders request received", { partnerId: req.user?.id || req.partner?.id, status: req.query?.status });
+    logger.debug("Partner orders request received", {
+      partnerId: req.user?.id || req.partner?.id,
+      segment: req.query?.segment,
+      status: req.query?.status
+    });
 
     const { selectedHotel, hotels, error } = await resolveAccessibleHotel(req);
     if (error) {
@@ -261,40 +281,127 @@ exports.getOrdersByStatus = async (req, res) => {
     }
 
     const partnerId = selectedHotel._id;
-    const { status = "NEW" } = req.query;
+    const segmentRaw = typeof req.query.segment === "string" ? req.query.segment.toLowerCase().trim() : "";
+    const legacyStatus = typeof req.query.status === "string" ? req.query.status.toUpperCase().trim() : "";
 
-    const statusMap = {
-      NEW: ["PLACED", "ACCEPTED", "PREPARING", "READY"],
-      CANCELLED: ["CANCELLED"],
-      COMPLETED: ["DELIVERED"]
-    };
-    const mappedStatuses = statusMap[status] || [status];
+    let mappedStatuses;
+    let sortSpec;
 
-    let orders = null;
-
-    if (!orders) {
-      orders = await Order.find({
-        partner: partnerId,
-        status: { $in: mappedStatuses }
-      })
-      .populate("user", "fullName mobileNumber")
-      .populate("deliveryAgent", "fullName mobileNumber")
-      .populate("items.menuItem", "name price image")
-      .sort({ createdAt: -1 });
+    if (segmentRaw && ORDER_SEGMENT_STATUS_MAP[segmentRaw]) {
+      mappedStatuses = ORDER_SEGMENT_STATUS_MAP[segmentRaw];
+      sortSpec =
+        segmentRaw === "completed"
+          ? { "timeline.deliveredAt": -1, updatedAt: -1 }
+          : { createdAt: -1 };
+    } else if (legacyStatus && LEGACY_ORDER_STATUS_MAP[legacyStatus]) {
+      mappedStatuses = LEGACY_ORDER_STATUS_MAP[legacyStatus];
+      sortSpec = { createdAt: -1 };
+    } else if (segmentRaw) {
+      return res.status(400).json({
+        message: "Invalid segment. Use new, ongoing, completed, or cancelled (or legacy status NEW, COMPLETED, CANCELLED)."
+      });
+    } else {
+      mappedStatuses = ORDER_SEGMENT_STATUS_MAP.new;
+      sortSpec = { createdAt: -1 };
     }
 
-    res.json({
+    const pageNumber = Math.max(Number(req.query.page) || 1, 1);
+    const limitNumber = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+
+    const baseQuery = {
+      partner: partnerId,
+      status: { $in: mappedStatuses }
+    };
+
+    const [orders, total] = await Promise.all([
+      Order.find(baseQuery)
+        .populate("user", "fullName mobileNumber")
+        .populate("deliveryAgent", "fullName mobileNumber")
+        .populate("items.menuItem", "name price image")
+        .sort(sortSpec)
+        .skip((pageNumber - 1) * limitNumber)
+        .limit(limitNumber),
+      Order.countDocuments(baseQuery)
+    ]);
+
+    return res.status(200).json({
+      message: "Orders fetched successfully",
       hotel: selectedHotel,
       hotels,
+      pagination: {
+        page: pageNumber,
+        limit: limitNumber,
+        total
+      },
       data: orders
     });
-
   } catch (error) {
     logger.error("Partner orders fetch failed", { message: error.message });
     res.status(500).json({ message: error.message });
   }
 };
 
+exports.getKitchenOrdersSummary = async (req, res) => {
+  try {
+    const { selectedHotel, hotels, error } = await resolveAccessibleHotel(req);
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
+
+    const partnerId = selectedHotel._id;
+    const [newCount, ongoingCount, completedCount, cancelledCount] = await Promise.all([
+      Order.countDocuments({ partner: partnerId, status: { $in: ORDER_SEGMENT_STATUS_MAP.new } }),
+      Order.countDocuments({ partner: partnerId, status: { $in: ORDER_SEGMENT_STATUS_MAP.ongoing } }),
+      Order.countDocuments({ partner: partnerId, status: { $in: ORDER_SEGMENT_STATUS_MAP.completed } }),
+      Order.countDocuments({ partner: partnerId, status: { $in: ORDER_SEGMENT_STATUS_MAP.cancelled } })
+    ]);
+
+    return res.status(200).json({
+      message: "Order counts fetched successfully",
+      hotel: selectedHotel,
+      hotels,
+      counts: {
+        new: newCount,
+        ongoing: ongoingCount,
+        completed: completedCount,
+        cancelled: cancelledCount
+      }
+    });
+  } catch (error) {
+    logger.error("Partner orders summary failed", { message: error.message });
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getPartnerOrderById = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    if (!isValidObjectId(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    const { hotelIds } = await getManagedHotelIds(req.partner.id);
+    const order = await Order.findOne({
+      _id: orderId,
+      partner: { $in: hotelIds }
+    })
+      .populate("user", "fullName mobileNumber")
+      .populate("deliveryAgent", "fullName mobileNumber")
+      .populate("items.menuItem", "name price image description");
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    return res.status(200).json({
+      message: "Order fetched successfully",
+      data: order
+    });
+  } catch (error) {
+    logger.error("Partner order detail failed", { message: error.message });
+    res.status(500).json({ message: error.message });
+  }
+};
 
 exports.updateKitchenStatus = async (req, res) => {
   try {

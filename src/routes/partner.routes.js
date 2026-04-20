@@ -126,23 +126,64 @@ router.get('/dashboard', auth, controller.getDashboardStats)
  * @swagger
  * /api/partner/orders:
  *   get:
- *     summary: View orders by status
+ *     summary: List kitchen orders by segment (or legacy status)
  *     tags: [Partner Orders]
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: query
+ *         name: hotelId
+ *         schema:
+ *           type: string
+ *         description: Selected kitchen id (optional if only one)
+ *       - in: query
+ *         name: segment
+ *         schema:
+ *           type: string
+ *           enum: [new, ongoing, completed, cancelled]
+ *         description: Preferred filter; defaults to new when segment and status omitted
+ *       - in: query
  *         name: status
- *         required: true
  *         schema:
  *           type: string
  *           enum: [NEW, CANCELLED, COMPLETED]
- *         example: NEW
+ *         description: Legacy filter (ignored if segment is set). NEW includes PLACED through OUT_FOR_DELIVERY
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
  *     responses:
  *       200:
  *         description: Orders fetched successfully
+ *       400:
+ *         description: Invalid segment
  */
 router.get('/orders', auth, controller.getOrdersByStatus)
+
+/**
+ * @swagger
+ * /api/partner/orders/summary:
+ *   get:
+ *     summary: Order counts per segment for the selected kitchen
+ *     tags: [Partner Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: hotelId
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Counts for new, ongoing, completed, cancelled
+ */
+router.get('/orders/summary', auth, controller.getKitchenOrdersSummary)
 
 /**
  * @swagger
@@ -246,6 +287,28 @@ router.patch('/profile', auth, controller.updatePartnerProfile)
  *         description: Delivery contact fetched successfully
  */
 router.get('/orders/:orderId/delivery-contact', auth, controller.getDeliveryContactForOrder)
+
+/**
+ * @swagger
+ * /api/partner/orders/{orderId}:
+ *   get:
+ *     summary: Get a single order for the kitchen
+ *     tags: [Partner Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Order details
+ *       404:
+ *         description: Order not found
+ */
+router.get('/orders/:orderId', auth, controller.getPartnerOrderById)
 
 /**
  * @swagger
