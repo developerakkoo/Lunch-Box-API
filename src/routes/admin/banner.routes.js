@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const controller = require("../../controller/admin/banner.controller");
 const adminAuth = require("../../middlewares/adminAuth.middleware");
+const { upload } = require("../../middlewares/upload.middleware");
 
 /**
  * @swagger
@@ -20,7 +21,7 @@ const adminAuth = require("../../middlewares/adminAuth.middleware");
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             required:
@@ -32,7 +33,7 @@ const adminAuth = require("../../middlewares/adminAuth.middleware");
  *                 example: Weekend Offer
  *               image:
  *                 type: string
- *                 example: https://example.com/banner.jpg
+ *                 format: binary
  *               redirectLink:
  *                 type: string
  *                 example: /offers
@@ -40,7 +41,7 @@ const adminAuth = require("../../middlewares/adminAuth.middleware");
  *       200:
  *         description: Banner created successfully
  */
-router.post("/create", adminAuth, controller.createBanner);
+router.post("/create", adminAuth, upload.single("image"), controller.createBanner);
 
 
 /**

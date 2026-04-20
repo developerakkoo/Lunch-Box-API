@@ -3,6 +3,10 @@ const {
   isValidObjectId,
   resolveAccessibleHotel
 } = require("../utils/partnerAccess");
+const {
+  getUploadedFileName,
+  parsePossiblyJsonArray
+} = require("../utils/media");
 
 const getRequestedPartnerId = (req) =>
   req.body?.partnerId ||
@@ -65,6 +69,7 @@ exports.createCategory = async (req, res) => {
   try {
     const { name, description, image } = req.body;
     let partnerId = null;
+    const uploadedImage = getUploadedFileName(req.file);
 
     if (req.admin) {
       partnerId = null;
@@ -81,7 +86,7 @@ exports.createCategory = async (req, res) => {
     const category = await Category.create({
       name,
       description,
-      image,
+      image: uploadedImage || image,
       partner: partnerId,
     });
 
@@ -131,6 +136,17 @@ exports.updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
     const { role, partnerId, error } = await resolveCategoryScope(req);
+    const uploadedImage = getUploadedFileName(req.file);
+    const updatePayload = sanitizeCategoryPayload(req.body);
+
+    if (uploadedImage) {
+      updatePayload.image = uploadedImage;
+    }
+
+    if (typeof updatePayload.image === "string") {
+      const [firstImage] = parsePossiblyJsonArray(updatePayload.image);
+      updatePayload.image = firstImage || updatePayload.image;
+    }
 
     if (error) {
       return res.status(error.status).json({ message: error.message });
@@ -144,7 +160,7 @@ exports.updateCategory = async (req, res) => {
 
     const category = await Category.findOneAndUpdate(
       filter,
-      sanitizeCategoryPayload(req.body),
+      updatePayload,
       { new: true }
     );
 

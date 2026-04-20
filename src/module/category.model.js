@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { normalizeAssetValue } = require("../utils/media");
 
 const categorySchema = new mongoose.Schema(
   {
@@ -25,7 +26,13 @@ const categorySchema = new mongoose.Schema(
       default: null,
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { getters: true },
+    toObject: { getters: true }
+  }
 );
+
+categorySchema.path("image").get(normalizeAssetValue);
 
 module.exports = mongoose.model("Category", categorySchema);

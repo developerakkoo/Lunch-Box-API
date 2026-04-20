@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const controller = require("../controller/menuItem.controller");
 const partnerAuth = require("../middlewares/partnerAuth.middleware");
+const { upload } = require("../middlewares/upload.middleware");
 
 /**
  * @swagger
@@ -20,7 +21,7 @@ const partnerAuth = require("../middlewares/partnerAuth.middleware");
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             allOf:
  *               - $ref: '#/components/schemas/MenuCreateRequest'
@@ -33,7 +34,7 @@ const partnerAuth = require("../middlewares/partnerAuth.middleware");
  *                     type: array
  *                     items:
  *                       type: string
- *                     example: ["https://example.com/paneer-1.jpg"]
+ *                       format: binary
  *                   hotelId:
  *                     type: string
  *                     example: "67e4b19f3b9d0e12ab345678"
@@ -41,7 +42,7 @@ const partnerAuth = require("../middlewares/partnerAuth.middleware");
  *       201:
  *         description: Menu item created successfully
  */
-router.post("/create", partnerAuth, controller.createMenuItem);
+router.post("/create", partnerAuth, upload.array("images", 10), controller.createMenuItem);
 
 /**
  * @swagger
@@ -54,7 +55,7 @@ router.post("/create", partnerAuth, controller.createMenuItem);
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             required: [items]
@@ -121,7 +122,7 @@ router.get("/list", partnerAuth, controller.getMenuItems);
  *       200:
  *         description: Menu item updated successfully
  */
-router.put("/update/:id", partnerAuth, controller.updateMenuItem);
+router.put("/update/:id", partnerAuth, upload.array("images", 10), controller.updateMenuItem);
 
 /**
  * @swagger

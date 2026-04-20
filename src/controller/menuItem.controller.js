@@ -3,6 +3,23 @@ const Category = require('../module/category.model')
 const {
   resolveAccessibleHotel
 } = require("../utils/partnerAccess");
+const {
+  getUploadedFileName,
+  parsePossiblyJsonArray
+} = require("../utils/media");
+
+const getMenuItemImages = (req, fallbackImages = []) => {
+  const uploadedImages = Array.isArray(req.files)
+    ? req.files.map((file) => getUploadedFileName(file)).filter(Boolean)
+    : [];
+
+  if (uploadedImages.length > 0) {
+    return uploadedImages;
+  }
+
+  const parsedImages = parsePossiblyJsonArray(fallbackImages);
+  return parsedImages.filter(Boolean);
+};
 
 // CREATE MENU ITEM
 exports.createMenuItem = async (req, res) => {
@@ -35,7 +52,7 @@ exports.createMenuItem = async (req, res) => {
       description,
       price,
       discountPrice,
-      images,
+      images: getMenuItemImages(req, images),
       isVeg,
       category,
       partner: selectedHotel._id
@@ -93,7 +110,7 @@ exports.bulkCreateMenuItems = async (req, res) => {
       description: item.description || '',
       price: item.price,
       discountPrice: item.discountPrice || 0,
-      images: item.images || '',
+      images: parsePossiblyJsonArray(item.images || ''),
       isVeg: item.isVeg ?? true,
       category: item.category,
       partner: selectedHotel._id
@@ -138,14 +155,22 @@ exports.updateMenuItem = async (req, res) => {
   try {
     const { id } = req.params
     const { selectedHotel, error } = await resolveAccessibleHotel(req)
+    const updatePayload = { ...req.body }
 
     if (error) {
       return res.status(error.status).json({ message: error.message })
     }
 
+    const uploadedImages = getMenuItemImages(req, updatePayload.images)
+    if (uploadedImages.length > 0) {
+      updatePayload.images = uploadedImages
+    } else if (updatePayload.images !== undefined) {
+      updatePayload.images = parsePossiblyJsonArray(updatePayload.images)
+    }
+
     const menu = await MenuItem.findOneAndUpdate(
       { _id: id, partner: selectedHotel._id },
-      req.body,
+      updatePayload,
       { new: true }
     )
 

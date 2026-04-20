@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const controller = require("../../controller/category.controller");
 const adminAuth = require("../../middlewares/adminAuth.middleware");
+const { upload } = require("../../middlewares/upload.middleware");
 
 /**
  * @swagger
@@ -40,7 +41,7 @@ router.get("/list", adminAuth, controller.getCategories);
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             required:
@@ -54,12 +55,12 @@ router.get("/list", adminAuth, controller.getCategories);
  *                 example: All fast food items
  *               image:
  *                 type: string
- *                 example: https://example.com/category.png
+ *                 format: binary
  *     responses:
  *       201:
  *         description: Category created successfully
  */
-router.post("/create", adminAuth, controller.createCategory);
+router.post("/create", adminAuth, upload.single("image"), controller.createCategory);
 
 /**
  * @swagger
@@ -84,7 +85,7 @@ router.post("/create", adminAuth, controller.createCategory);
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             properties:
@@ -94,11 +95,12 @@ router.post("/create", adminAuth, controller.createCategory);
  *                 type: string
  *               image:
  *                 type: string
+ *                 format: binary
  *     responses:
  *       200:
  *         description: Category updated successfully
  */
-router.put("/update/:id", adminAuth, controller.updateCategory);
+router.put("/update/:id", adminAuth, upload.single("image"), controller.updateCategory);
 
 /**
  * @swagger

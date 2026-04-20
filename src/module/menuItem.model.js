@@ -1,4 +1,5 @@
 const mongoose = require('mongoose')
+const { normalizeAssetValue } = require("../utils/media");
 
 const menuItemSchema = new mongoose.Schema(
   {
@@ -55,7 +56,13 @@ const menuItemSchema = new mongoose.Schema(
       required: true
     }
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { getters: true },
+    toObject: { getters: true }
+  }
 )
+
+menuItemSchema.path("images").get(normalizeAssetValue)
 
 module.exports = mongoose.model('MenuItem', menuItemSchema)

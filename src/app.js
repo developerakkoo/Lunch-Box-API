@@ -3,8 +3,10 @@ const cors = require("cors");
 const morgan = require("morgan");
 const helmet = require("helmet");
 const compression = require("compression");
+const path = require("path");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
+const { uploadsDir } = require("./middlewares/upload.middleware");
 
 const app = express();
 
@@ -17,6 +19,7 @@ app.use(express.json());
 app.use(morgan("dev"));
 app.use(helmet());
 app.use(compression());
+app.use("/uploads", express.static(path.resolve(uploadsDir)));
 
 /* -------------------------------------------------------------------------- */
 /*                                  SWAGGER                                   */
