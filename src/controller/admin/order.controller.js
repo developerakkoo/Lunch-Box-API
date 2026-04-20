@@ -3,6 +3,10 @@ const Order = require("../../module/order.model");
 const User = require("../../module/user.model");
 const Partner = require("../../module/partner.model");
 const DeliveryAgent = require("../../module/Delivery_Agent");
+const {
+  clearDriverAssignment,
+  publishOrderEvent
+} = require("../../utils/orderEvents");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 const CLOSED_ORDER_STATUSES = ["DELIVERED", "CANCELLED"];
@@ -186,6 +190,15 @@ exports.cancelOrder = async (req, res) => {
       reason,
       cancelledBy: "ADMIN"
     });
+    await publishOrderEvent({
+      type: "ORDER_CANCELLED",
+      order,
+      cancelledBy: "ADMIN",
+      reason
+    });
+    if (order.deliveryAgent) {
+      await clearDriverAssignment(order.deliveryAgent);
+    }
 
     return res.status(200).json({
       message: "Order cancelled successfully",

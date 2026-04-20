@@ -1,4 +1,5 @@
 const { Server } = require("socket.io");
+const logger = require("../utils/logger");
 
 let io;
 
@@ -9,7 +10,7 @@ const initSocket = (server) => {
     }
   });
 
-  console.log("🔥 Socket.IO initialized");
+  logger.info("Socket.IO initialized");
 
   return io;
 };

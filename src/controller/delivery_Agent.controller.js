@@ -5,11 +5,20 @@ const User = require("../module/user.model");
 const Partner = require("../module/partner.model");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const logger = require("../utils/logger");
 const {
   emitOrderPicked,
   emitOrderDelivered
 } = require("../socket/order.socket");
 const { notifyDeliveryAgent } = require("../utils/deliveryNotification");
+const {
+  acquireOrderLock,
+  clearDriverAssignment,
+  publishOrderEvent,
+  removeDriverReadyOrder,
+  setDriverAssignment,
+  setDriverPresence
+} = require("../utils/orderEvents");
 
 const getDriverIdFromReq = (req) => req?.driver?.id;
 const ACTIVE_DELIVERY_STATUSES = ["READY", "OUT_FOR_DELIVERY"];
@@ -52,6 +61,7 @@ const syncAgentAvailability = async (agent) => {
 
 exports.registerDriver = async (req, res) => {
   try {
+    logger.info("Driver register request received", { email: req.body?.email });
     const {
       fullName,
       email,
@@ -89,12 +99,14 @@ exports.registerDriver = async (req, res) => {
       data: driver
     });
   } catch (error) {
+    logger.error("Driver registration failed", { message: error.message });
     return res.status(500).json({ message: error.message });
   }
 };
 
 exports.loginDriver = async (req, res) => {
   try {
+    logger.info("Driver login request received", { email: req.body?.email });
     const { email, password } = req.body;
     const driver = await DeliveryAgent.findOne({ email: String(email || "").toLowerCase() });
 
@@ -117,6 +129,7 @@ exports.loginDriver = async (req, res) => {
       driver
     });
   } catch (error) {
+    logger.error("Driver login failed", { message: error.message });
     return res.status(500).json({ message: error.message });
   }
 };
@@ -169,6 +182,7 @@ exports.updateProfile = async (req, res) => {
 
 exports.toggleOnlineStatus = async (req, res) => {
   try {
+    logger.info("Driver toggle online request", { driverId: getDriverIdFromReq(req) });
     const agent = await findAgentFromToken(getDriverIdFromReq(req));
     if (!agent) return res.status(404).json({ message: "Agent profile not found" });
 
@@ -185,6 +199,11 @@ exports.toggleOnlineStatus = async (req, res) => {
     }
 
     await agent.save();
+    await setDriverPresence(agent._id, {
+      isOnline: agent.isOnline,
+      isAvailable: agent.isAvailable,
+      currentOrder: agent.currentOrder || null
+    });
 
     return res.status(200).json({
       message: "Driver status updated",
@@ -194,12 +213,14 @@ exports.toggleOnlineStatus = async (req, res) => {
       }
     });
   } catch (error) {
+    logger.error("Driver toggle online failed", { message: error.message });
     return res.status(500).json({ message: error.message });
   }
 };
 
 exports.updateAvailabilityStatus = async (req, res) => {
   try {
+    logger.info("Driver availability request", { driverId: getDriverIdFromReq(req), status: req.body?.status });
     const { status } = req.body;
     if (!["ACTIVE", "INACTIVE"].includes(status)) {
       return res.status(400).json({ message: "status must be ACTIVE or INACTIVE" });
@@ -219,6 +240,11 @@ exports.updateAvailabilityStatus = async (req, res) => {
       agent.shift.endedAt = new Date();
     }
     await agent.save();
+    await setDriverPresence(agent._id, {
+      isOnline: agent.isOnline,
+      isAvailable: agent.isAvailable,
+      currentOrder: agent.currentOrder || null
+    });
 
     return res.status(200).json({
       message: "Availability status updated",
@@ -229,12 +255,14 @@ exports.updateAvailabilityStatus = async (req, res) => {
       }
     });
   } catch (error) {
+    logger.error("Driver availability update failed", { message: error.message });
     return res.status(500).json({ message: error.message });
   }
 };
 
 exports.updateLiveLocation = async (req, res) => {
   try {
+    logger.debug("Driver location update request", { driverId: getDriverIdFromReq(req) });
     const { latitude, longitude } = req.body;
     if (latitude === undefined || longitude === undefined) {
       return res.status(400).json({ message: "latitude and longitude are required" });
@@ -249,18 +277,26 @@ exports.updateLiveLocation = async (req, res) => {
       updatedAt: new Date()
     };
     await agent.save();
+    await setDriverPresence(agent._id, {
+      isOnline: agent.isOnline,
+      isAvailable: agent.isAvailable,
+      currentOrder: agent.currentOrder || null,
+      liveLocation: agent.liveLocation
+    });
 
     return res.status(200).json({
       message: "Location updated successfully",
       data: agent.liveLocation
     });
   } catch (error) {
+    logger.error("Driver location update failed", { message: error.message });
     return res.status(500).json({ message: error.message });
   }
 };
 
 exports.getOrdersByDeliveryStatus = async (req, res) => {
   try {
+    logger.debug("Driver orders request", { driverId: getDriverIdFromReq(req), status: req.query?.status });
     const agent = await findAgentFromToken(getDriverIdFromReq(req));
     if (!agent) return res.status(404).json({ message: "Agent profile not found" });
 
@@ -287,15 +323,20 @@ exports.getOrdersByDeliveryStatus = async (req, res) => {
           status: { $in: statuses }
         };
 
-    const [orders, total] = await Promise.all([
-      Order.find(query)
-        .populate("partner", "kitchenName address latitude longitude phone")
-        .populate("user", "fullName mobileNumber")
-        .sort({ createdAt: -1 })
-        .skip((pageNumber - 1) * limitNumber)
-        .limit(limitNumber),
-      Order.countDocuments(query)
-    ]);
+    let orders = null;
+    let total = null;
+
+    if (!orders) {
+      [orders, total] = await Promise.all([
+        Order.find(query)
+          .populate("partner", "kitchenName address latitude longitude phone")
+          .populate("user", "fullName mobileNumber")
+          .sort({ createdAt: -1 })
+          .skip((pageNumber - 1) * limitNumber)
+          .limit(limitNumber),
+        Order.countDocuments(query)
+      ]);
+    }
 
     return res.status(200).json({
       message: "Orders fetched successfully",
@@ -303,12 +344,14 @@ exports.getOrdersByDeliveryStatus = async (req, res) => {
       data: orders
     });
   } catch (error) {
+    logger.error("Driver orders fetch failed", { message: error.message });
     return res.status(500).json({ message: error.message });
   }
 };
 
 exports.acceptOrder = async (req, res) => {
   try {
+    logger.info("Driver accept order request", { orderId: req.params.orderId, driverId: getDriverIdFromReq(req) });
     const { orderId } = req.params;
     const agent = await findAgentFromToken(getDriverIdFromReq(req));
     if (!agent) return res.status(404).json({ message: "Agent profile not found" });
@@ -327,12 +370,19 @@ exports.acceptOrder = async (req, res) => {
       return res.status(400).json({ message: "Order already assigned to another delivery agent" });
     }
 
+    const lock = await acquireOrderLock(orderId, "driver_accept", 15);
+    if (!lock) {
+      return res.status(409).json({ message: "Order is being processed by another driver" });
+    }
+
     order.deliveryAgent = agent._id;
     await order.save();
 
     agent.currentOrder = order._id;
     agent.isAvailable = false;
     await agent.save();
+    await setDriverAssignment(agent._id, order._id);
+    await removeDriverReadyOrder(order._id);
 
     await notifyDeliveryAgent({
       deliveryAgentId: agent._id,
@@ -350,18 +400,25 @@ exports.acceptOrder = async (req, res) => {
       orderId: order._id,
       deliveryAgentId: agent._id
     });
+    await publishOrderEvent({
+      type: "ORDER_ASSIGNED_TO_DRIVER",
+      order,
+      driverId: agent._id
+    });
 
     return res.status(200).json({
       message: "Order accepted successfully",
       data: order
     });
   } catch (error) {
+    logger.error("Driver accept order failed", { message: error.message });
     return res.status(500).json({ message: error.message });
   }
 };
 
 exports.rejectOrder = async (req, res) => {
   try {
+    logger.warn("Driver reject order request", { orderId: req.params.orderId, driverId: getDriverIdFromReq(req) });
     const { orderId } = req.params;
     const { reason = "Rejected by delivery agent" } = req.body || {};
 
@@ -384,6 +441,7 @@ exports.rejectOrder = async (req, res) => {
     agent.currentOrder = null;
     agent.isAvailable = true;
     await agent.save();
+    await clearDriverAssignment(agent._id);
 
     await notifyDeliveryAgent({
       deliveryAgentId: agent._id,
@@ -397,18 +455,26 @@ exports.rejectOrder = async (req, res) => {
       orderId: order._id,
       reason
     });
+    await publishOrderEvent({
+      type: "ORDER_REJECTED",
+      order,
+      driverId: agent._id,
+      reason
+    });
 
     return res.status(200).json({
       message: "Order rejected successfully",
       data: order
     });
   } catch (error) {
+    logger.error("Driver reject order failed", { message: error.message });
     return res.status(500).json({ message: error.message });
   }
 };
 
 exports.pickOrder = async (req, res) => {
   try {
+    logger.info("Driver pick order request", { orderId: req.params.orderId, driverId: getDriverIdFromReq(req) });
     const { orderId } = req.params;
     const agent = await findAgentFromToken(getDriverIdFromReq(req));
     if (!agent) return res.status(404).json({ message: "Agent profile not found" });
@@ -429,18 +495,26 @@ exports.pickOrder = async (req, res) => {
 
     global.io?.to(`user_${order.user}`).emit("delivery_started", order);
     emitOrderPicked(order);
+    await removeDriverReadyOrder(order._id);
+    await publishOrderEvent({
+      type: "ORDER_PICKED",
+      order,
+      driverId: agent._id
+    });
 
     return res.status(200).json({
       message: "Order picked successfully",
       data: order
     });
   } catch (error) {
+    logger.error("Driver pick order failed", { message: error.message });
     return res.status(500).json({ message: error.message });
   }
 };
 
 exports.completeOrder = async (req, res) => {
   try {
+    logger.info("Driver complete order request", { orderId: req.params.orderId, driverId: getDriverIdFromReq(req) });
     const { orderId } = req.params;
     const agent = await findAgentFromToken(getDriverIdFromReq(req));
     if (!agent) return res.status(404).json({ message: "Agent profile not found" });
@@ -470,6 +544,7 @@ exports.completeOrder = async (req, res) => {
     agent.currentOrder = null;
     agent.isAvailable = true;
     await agent.save();
+    await clearDriverAssignment(agent._id);
 
     await notifyDeliveryAgent({
       deliveryAgentId: agent._id,
@@ -480,12 +555,18 @@ exports.completeOrder = async (req, res) => {
     });
 
     emitOrderDelivered(order);
+    await publishOrderEvent({
+      type: "ORDER_DELIVERED",
+      order,
+      driverId: agent._id
+    });
 
     return res.status(200).json({
       message: "Order completed successfully",
       data: order
     });
   } catch (error) {
+    logger.error("Driver complete order failed", { message: error.message });
     return res.status(500).json({ message: error.message });
   }
 };

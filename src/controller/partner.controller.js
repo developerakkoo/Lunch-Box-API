@@ -13,6 +13,10 @@ const {
   getManagedHotelIds,
   resolveAccessibleHotel
 } = require("../utils/partnerAccess");
+const {
+  setPartnerPresence
+} = require("../utils/orderEvents");
+const logger = require("../utils/logger");
 // const Review = require("../module/review.model");
 
 
@@ -30,6 +34,7 @@ const generateToken = (partner) => {
 
 exports.registerPartner = async (req, res) => {
   try {
+    logger.info("Partner register request received", { email: req.body?.email });
 
     const { kitchenName, ownerName, email, password } = req.body;
 
@@ -64,6 +69,7 @@ exports.registerPartner = async (req, res) => {
 
 exports.loginPartner = async (req, res) => {
   try {
+    logger.info("Partner login request received", { email: req.body?.email });
 
     const { email, password } = req.body;
 
@@ -94,6 +100,7 @@ exports.loginPartner = async (req, res) => {
     });
 
   } catch (error) {
+    logger.error("Partner login failed", { message: error.message });
     res.status(500).json({ message: error.message });
   }
 };
@@ -102,6 +109,7 @@ exports.loginPartner = async (req, res) => {
 exports.getDashboardStats = async (req, res) => {
 
   try {
+    logger.debug("Partner dashboard request received", { partnerId: req.user?.id || req.partner?.id });
 
     const { selectedHotel, hotels, error } = await resolveAccessibleHotel(req);
 
@@ -238,12 +246,14 @@ exports.getDashboardStats = async (req, res) => {
     });
 
   } catch (error) {
+    logger.error("Partner dashboard failed", { message: error.message });
     res.status(500).json({ message: error.message });
   }
 };
 
 exports.getOrdersByStatus = async (req, res) => {
   try {
+    logger.debug("Partner orders request received", { partnerId: req.user?.id || req.partner?.id, status: req.query?.status });
 
     const { selectedHotel, hotels, error } = await resolveAccessibleHotel(req);
     if (error) {
@@ -260,14 +270,18 @@ exports.getOrdersByStatus = async (req, res) => {
     };
     const mappedStatuses = statusMap[status] || [status];
 
-    const orders = await Order.find({
-      partner: partnerId,
-      status: { $in: mappedStatuses }
-    })
-    .populate("user", "fullName mobileNumber")
-    .populate("deliveryAgent", "fullName mobileNumber")
-    .populate("items.menuItem", "name price image")
-    .sort({ createdAt: -1 });
+    let orders = null;
+
+    if (!orders) {
+      orders = await Order.find({
+        partner: partnerId,
+        status: { $in: mappedStatuses }
+      })
+      .populate("user", "fullName mobileNumber")
+      .populate("deliveryAgent", "fullName mobileNumber")
+      .populate("items.menuItem", "name price image")
+      .sort({ createdAt: -1 });
+    }
 
     res.json({
       hotel: selectedHotel,
@@ -276,6 +290,7 @@ exports.getOrdersByStatus = async (req, res) => {
     });
 
   } catch (error) {
+    logger.error("Partner orders fetch failed", { message: error.message });
     res.status(500).json({ message: error.message });
   }
 };
@@ -283,6 +298,7 @@ exports.getOrdersByStatus = async (req, res) => {
 
 exports.updateKitchenStatus = async (req, res) => {
   try {
+    logger.info("Partner kitchen status update request", { partnerId: req.user?.id || req.partner?.id, status: req.body?.status });
     const { selectedHotel, error } = await resolveAccessibleHotel(req);
     if (error) {
       return res.status(error.status).json({ message: error.message });
@@ -306,6 +322,10 @@ exports.updateKitchenStatus = async (req, res) => {
     partner.isActive = status === "ACTIVE";
 
     await partner.save();
+    await setPartnerPresence(partner._id, {
+      status: partner.status,
+      isActive: partner.isActive
+    });
 
     res.json({
       message: "Kitchen status updated successfully",
@@ -313,6 +333,7 @@ exports.updateKitchenStatus = async (req, res) => {
     });
 
   } catch (error) {
+    logger.error("Partner kitchen status update failed", { message: error.message });
     res.status(500).json({ message: error.message });
   }
 };

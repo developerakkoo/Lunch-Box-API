@@ -9,6 +9,11 @@ const { createPaymentIntent, retrievePaymentIntent } = require("../utils/stripe"
 const assignDeliveryBoy = require("../utils/deliveryAssignment");
 const { notifyPartner } = require("../utils/partnerNotification");
 const { getManagedHotelIds } = require("../utils/partnerAccess");
+const logger = require("../utils/logger");
+const {
+  publishOrderEvent,
+  clearDriverAssignment
+} = require("../utils/orderEvents");
 const mongoose = require("mongoose");
 
 const CUSTOMER_STATUS = {
@@ -85,6 +90,7 @@ const createWalletLedgerEntry = async ({
 
 exports.createOrder = async (req, res) => {
   try {
+    logger.info("HTTP createOrder request received", { userId: getActorIdFromReq(req) });
     const userId = getActorIdFromReq(req);
     const { addressId, paymentMethod = "COD" } = req.body;
     const actorRole = await getActorRole(userId);
@@ -162,6 +168,7 @@ exports.createOrder = async (req, res) => {
     }
 
     const order = await Order.create(orderData);
+    logger.info("HTTP order created", { orderId: order._id, userId, partnerId: order.partner });
 
     // If online payment, create a Razorpay order and return details
     let razorpayOrder = null;
@@ -174,7 +181,7 @@ exports.createOrder = async (req, res) => {
           await order.save();
         }
       } catch (err) {
-        console.error("Razorpay order create failed:", err.message || err);
+        logger.error("Razorpay order create failed", { orderId: order._id, message: err.message || err });
       }
     }
 
@@ -191,6 +198,11 @@ exports.createOrder = async (req, res) => {
       message: `You received a new order #${order._id.toString().slice(-6)}`,
       data: { orderId: order._id, status: order.status }
     });
+    await publishOrderEvent({
+      type: "ORDER_CREATED",
+      order
+    });
+    logger.debug("Published ORDER_CREATED event", { orderId: order._id });
 
     return res.status(201).json({ message: "Order created successfully", order, razorpayOrder });
   } catch (error) {
@@ -200,6 +212,7 @@ exports.createOrder = async (req, res) => {
 
 exports.kitchenAction = async (req, res) => {
   try {
+    logger.info("HTTP kitchenAction request received", { orderId: req.params.orderId, actorId: getActorIdFromReq(req) });
     const actorId = getActorIdFromReq(req);
     const actorRole = await getActorRole(actorId);
     const { orderId } = req.params;
@@ -233,9 +246,14 @@ exports.kitchenAction = async (req, res) => {
       order.status = "ACCEPTED";
       order.timeline.acceptedAt = new Date();
       await order.save();
+      logger.info("HTTP kitchen accepted order", { orderId: order._id });
 
       global.io?.to(`user_${order.user}`).emit("order_accepted", order);
       emitCustomerStatusFromOrder(order);
+      await publishOrderEvent({
+        type: "ORDER_ACCEPTED",
+        order
+      });
     } else if (action === "PREPARING") {
       if (!["ACCEPTED", "PREPARING"].includes(order.status)) {
         return apiError(res, 409, "INVALID_ORDER_STATE", "Only accepted orders can move to preparing");
@@ -248,8 +266,13 @@ exports.kitchenAction = async (req, res) => {
         order.timeline.preparingAt = new Date();
       }
       await order.save();
+      logger.info("HTTP kitchen marked preparing", { orderId: order._id });
       global.io?.to(`user_${order.user}`).emit("order_preparing", order);
       emitCustomerStatusFromOrder(order);
+      await publishOrderEvent({
+        type: "ORDER_PREPARING",
+        order
+      });
     } else if (action === "READY") {
       if (!["PREPARING", "READY"].includes(order.status)) {
         return apiError(res, 409, "INVALID_ORDER_STATE", "Only preparing orders can move to ready");
@@ -260,12 +283,19 @@ exports.kitchenAction = async (req, res) => {
       }
       order.timeline.readyAt = new Date();
       await order.save();
+      logger.info("HTTP kitchen marked ready", { orderId: order._id });
 
       global.io?.to(`user_${order.user}`).emit("order_ready", order);
       emitCustomerStatusFromOrder(order);
+      await publishOrderEvent({
+        type: "ORDER_READY",
+        order
+      });
 
       if (!order.deliveryAgent && typeof assignDeliveryBoy === "function") {
         await assignDeliveryBoy(order);
+      } else if (order.deliveryAgent) {
+        await clearDriverAssignment(order.deliveryAgent);
       }
     } else {
       if (!["PLACED", "ACCEPTED", "PREPARING", "READY"].includes(order.status)) {
@@ -274,6 +304,7 @@ exports.kitchenAction = async (req, res) => {
       order.status = "CANCELLED";
       order.timeline.cancelledAt = new Date();
       await order.save();
+      logger.warn("HTTP kitchen rejected order", { orderId: order._id });
 
       // Refund wallet if paid via wallet
       if (order.payment?.method === "WALLET" && order.payment?.paymentStatus === "PAID") {
@@ -287,6 +318,12 @@ exports.kitchenAction = async (req, res) => {
 
       global.io?.to(`user_${order.user}`).emit("order_cancelled", order);
       emitCustomerStatusFromOrder(order);
+      await publishOrderEvent({
+        type: "ORDER_CANCELLED",
+        order,
+        cancelledBy: "PARTNER",
+        reason: "Rejected by partner"
+      });
 
       if (order.deliveryAgent) {
         await DeliveryAgent.findByIdAndUpdate(order.deliveryAgent, {
@@ -295,6 +332,7 @@ exports.kitchenAction = async (req, res) => {
             isAvailable: true
           }
         });
+        await clearDriverAssignment(order.deliveryAgent);
       }
     }
 
@@ -306,6 +344,7 @@ exports.kitchenAction = async (req, res) => {
 
 exports.deliveryAction = async (req, res) => {
   try {
+    logger.info("HTTP deliveryAction request received", { orderId: req.params.orderId, actorId: getActorIdFromReq(req) });
     const actorId = getActorIdFromReq(req);
     const actorRole = await getActorRole(actorId);
     const { orderId } = req.params;
@@ -332,9 +371,14 @@ exports.deliveryAction = async (req, res) => {
     order.status = "OUT_FOR_DELIVERY";
     order.timeline.pickedAt = new Date();
     await order.save();
+    logger.info("HTTP delivery started", { orderId: order._id, driverId: actorId });
 
     global.io?.to(`user_${order.user}`).emit("delivery_started", order);
     emitCustomerStatusFromOrder(order);
+    await publishOrderEvent({
+      type: "ORDER_PICKED",
+      order
+    });
 
     return res.status(200).json({ message: "Delivery started", order });
   } catch (error) {
@@ -344,6 +388,7 @@ exports.deliveryAction = async (req, res) => {
 
 exports.markDelivered = async (req, res) => {
   try {
+    logger.info("HTTP markDelivered request received", { orderId: req.params.orderId, actorId: getActorIdFromReq(req) });
     const actorId = getActorIdFromReq(req);
     const actorRole = await getActorRole(actorId);
     const { orderId } = req.params;
@@ -373,6 +418,7 @@ exports.markDelivered = async (req, res) => {
     order.timeline.deliveredAt = new Date();
 
     await order.save();
+    logger.info("HTTP order delivered", { orderId: order._id, driverId: actorId });
 
     if (order.deliveryAgent) {
       await DeliveryAgent.findByIdAndUpdate(order.deliveryAgent, {
@@ -381,10 +427,15 @@ exports.markDelivered = async (req, res) => {
           isAvailable: true
         }
       });
+      await clearDriverAssignment(order.deliveryAgent);
     }
 
     global.io?.to(`user_${order.user}`).emit("order_delivered", order);
     emitCustomerStatusFromOrder(order);
+    await publishOrderEvent({
+      type: "ORDER_DELIVERED",
+      order
+    });
 
     return res.status(200).json({ message: "Order delivered successfully" });
   } catch (error) {
@@ -448,6 +499,12 @@ exports.confirmPayment = async (req, res) => {
       orderId: order._id,
       paymentId: razorpay_payment_id
     });
+    await publishOrderEvent({
+      type: "PAYMENT_CONFIRMED",
+      order,
+      paymentId: razorpay_payment_id
+    });
+    logger.debug("Published PAYMENT_CONFIRMED event", { orderId: order._id, paymentId: razorpay_payment_id });
 
     return res.json({ message: "Payment confirmed", order });
   } catch (error) {
@@ -524,6 +581,7 @@ exports.getMyOrderDetails = async (req, res) => {
 
 exports.cancelMyOrder = async (req, res) => {
   try {
+    logger.info("HTTP cancelMyOrder request received", { orderId: req.params.orderId, userId: getActorIdFromReq(req) });
     const userId = getActorIdFromReq(req);
     const actorRole = await getActorRole(userId);
     if (actorRole !== "USER") {
@@ -576,6 +634,13 @@ exports.cancelMyOrder = async (req, res) => {
     });
     global.io?.to(`user_${order.user}`).emit("order_cancelled", order);
     emitCustomerStatusFromOrder(order);
+    await publishOrderEvent({
+      type: "ORDER_CANCELLED",
+      order,
+      cancelledBy: "USER",
+      reason
+    });
+    logger.warn("Published ORDER_CANCELLED event", { orderId: order._id, cancelledBy: "USER", reason });
 
     if (order.deliveryAgent) {
       await DeliveryAgent.findByIdAndUpdate(order.deliveryAgent, {
@@ -584,6 +649,7 @@ exports.cancelMyOrder = async (req, res) => {
           isAvailable: true
         }
       });
+      await clearDriverAssignment(order.deliveryAgent);
     }
 
     return res.status(200).json({
