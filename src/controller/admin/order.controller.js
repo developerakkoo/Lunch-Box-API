@@ -3,13 +3,19 @@ const Order = require("../../module/order.model");
 const User = require("../../module/user.model");
 const Partner = require("../../module/partner.model");
 const DeliveryAgent = require("../../module/Delivery_Agent");
+const assignDeliveryBoy = require("../../utils/deliveryAssignment");
 const {
   clearDriverAssignment,
-  publishOrderEvent
+  publishOrderEvent,
 } = require("../../utils/orderEvents");
+const {
+  canTransition,
+  applyTimelineForStatus,
+  buildOrderStatusPayload,
+  CLOSED_ORDER_STATUSES,
+} = require("../../constants/orderStatus");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
-const CLOSED_ORDER_STATUSES = ["DELIVERED", "CANCELLED"];
 
 exports.getAllOrders = async (req, res) => {
   try {
@@ -132,7 +138,99 @@ exports.getOrderDetails = async (req, res) => {
 
     return res.status(200).json({
       message: "Order details fetched successfully",
-      data: order
+      data: order,
+      statusMeta: buildOrderStatusPayload(order),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.listDeliveryAgents = async (req, res) => {
+  try {
+    const agents = await DeliveryAgent.find({})
+      .select("fullName mobileNumber email status isOnline isAvailable currentOrder")
+      .sort({ fullName: 1 })
+      .limit(200);
+    return res.status(200).json({
+      message: "Delivery agents fetched",
+      data: agents,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.assignDriver = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { deliveryAgentId, autoAssign } = req.body || {};
+
+    if (!isValidObjectId(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (CLOSED_ORDER_STATUSES.includes(order.status)) {
+      return res.status(409).json({ message: `Order is ${order.status}` });
+    }
+
+    if (autoAssign === true) {
+      await assignDeliveryBoy(order);
+      const refreshed = await Order.findById(orderId);
+      await publishOrderEvent({
+        type: "ORDER_ASSIGNED",
+        order: refreshed,
+        updatedBy: "ADMIN",
+      });
+      return res.status(200).json({
+        message: "Driver auto-assigned",
+        data: refreshed,
+      });
+    }
+
+    if (deliveryAgentId === null || deliveryAgentId === "") {
+      if (order.deliveryAgent) {
+        await clearDriverAssignment(order.deliveryAgent);
+      }
+      order.deliveryAgent = null;
+      await order.save();
+      await publishOrderEvent({ type: "ORDER_UNASSIGNED", order, updatedBy: "ADMIN" });
+      return res.status(200).json({ message: "Driver unassigned", data: order });
+    }
+
+    if (!isValidObjectId(deliveryAgentId)) {
+      return res.status(400).json({ message: "Invalid delivery agent id" });
+    }
+
+    const agent = await DeliveryAgent.findById(deliveryAgentId);
+    if (!agent) {
+      return res.status(404).json({ message: "Delivery agent not found" });
+    }
+
+    order.deliveryAgent = agent._id;
+    await order.save();
+
+    agent.currentOrder = order._id;
+    agent.isAvailable = false;
+    await agent.save();
+
+    global.io?.to(`delivery_${agent._id}`).emit("order_assigned", order);
+
+    await publishOrderEvent({
+      type: "ORDER_ASSIGNED",
+      order,
+      updatedBy: "ADMIN",
+      driverId: agent._id,
+    });
+
+    return res.status(200).json({
+      message: "Driver assigned successfully",
+      data: order,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -172,18 +270,14 @@ exports.updateOrderStatus = async (req, res) => {
       return res.status(409).json({ message: `Order already ${order.status.toLowerCase()}` });
     }
 
-    const now = new Date();
+    if (!canTransition(order.status, status, "ADMIN")) {
+      return res.status(400).json({
+        message: `Cannot transition from ${order.status} to ${status}`,
+      });
+    }
+
     order.status = status;
-    order.timeline = order.timeline || {};
-
-    if (status === "PLACED") order.timeline.placedAt = order.timeline.placedAt || now;
-    if (status === "ACCEPTED") order.timeline.acceptedAt = now;
-    if (status === "PREPARING") order.timeline.preparingAt = now;
-    if (status === "READY") order.timeline.readyAt = now;
-    if (status === "OUT_FOR_DELIVERY") order.timeline.pickedAt = now;
-    if (status === "DELIVERED") order.timeline.deliveredAt = now;
-    if (status === "CANCELLED") order.timeline.cancelledAt = now;
-
+    applyTimelineForStatus(order, status);
     await order.save();
 
     await publishOrderEvent({

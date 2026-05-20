@@ -120,6 +120,8 @@ router.get("/orders/:orderId", adminAuth, controller.getOrderDetails);
  *       200:
  *         description: Order cancelled successfully
  */
+router.get("/drivers", adminAuth, controller.listDeliveryAgents);
+router.patch("/orders/:orderId/assign-driver", adminAuth, controller.assignDriver);
 router.patch("/orders/:orderId/status", adminAuth, controller.updateOrderStatus);
 router.patch("/orders/:orderId/cancel", adminAuth, controller.cancelOrder);
 

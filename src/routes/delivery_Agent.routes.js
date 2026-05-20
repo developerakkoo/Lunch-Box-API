@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const controller = require("../controller/delivery_Agent.controller");
 const driverAuth = require("../middlewares/driverAuth.middleware");
+const { upload } = require("../middlewares/upload.middleware");
 
 /**
  * @swagger
@@ -280,7 +281,7 @@ router.put("/pick-order/:orderId", driverAuth, controller.pickOrder);
  *       200:
  *         description: Order completed successfully
  */
-router.put("/complete-order/:orderId", driverAuth, controller.completeOrder);
+router.put("/complete-order/:orderId", driverAuth, upload.single("proof"), controller.completeOrder);
 
 /**
  * @swagger

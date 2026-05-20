@@ -14,28 +14,10 @@ const { getManagedHotelIds } = require("../utils/partnerAccess");
 const logger = require("../utils/logger");
 const {
   clearDriverAssignment,
+  emitOrderStatusUpdate,
   publishOrderEvent,
   removeDriverReadyOrder
 } = require("../utils/orderEvents");
-
-const CUSTOMER_STATUS = {
-  PLACED: "ORDER_RECEIVED",
-  ACCEPTED: "ACCEPTED",
-  PREPARING: "PROCESSING",
-  READY: "READY_FOR_PICKUP",
-  OUT_FOR_DELIVERY: "ON_ROUTE",
-  DELIVERED: "DELIVERED",
-  CANCELLED: "CANCELLED"
-};
-
-const emitOrderStatusUpdate = (io, order) => {
-  io.to(`user_${order.user}`).emit("order_status_update", {
-    orderId: order._id,
-    status: CUSTOMER_STATUS[order.status] || order.status,
-    internalStatus: order.status,
-    timeline: order.timeline
-  });
-};
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -96,6 +78,12 @@ const getSocketActor = async (socket) => {
     }
 
     if (role === "DELIVERY_AGENT") {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      socket.data.actor = { role, id: decoded.id };
+      return socket.data.actor;
+    }
+
+    if (role === "ADMIN") {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       socket.data.actor = { role, id: decoded.id };
       return socket.data.actor;
@@ -199,6 +187,14 @@ const orderSocketHandler = () => {
       }
       socket.join(`delivery_${deliveryId}`);
       logger.info("Delivery room joined", { socketId: socket.id, deliveryId });
+      callback && callback({ status: "ok" });
+    });
+
+    socket.on("join_admin", async (_payload, callback) => {
+      const { actor, error } = await requireActor(socket, ["ADMIN"]);
+      if (error) return callback && callback(error);
+      socket.join("admin_orders");
+      logger.info("Admin joined orders room", { socketId: socket.id, adminId: actor.id });
       callback && callback({ status: "ok" });
     });
 
@@ -308,7 +304,9 @@ const orderSocketHandler = () => {
         await cart.save();
 
         io.to(`kitchen_${order.partner}`).emit("new_order", order);
+        io.to("admin_orders").emit("new_order", order);
         emitOrderStatusUpdate(io, order);
+        await publishOrderEvent({ type: "ORDER_CREATED", order });
         await notifyPartner({
           partnerId: order.partner,
           type: "NEW_ORDER",

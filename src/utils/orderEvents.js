@@ -1,6 +1,11 @@
 const crypto = require("crypto");
 const logger = require("./logger");
+const {
+  buildOrderStatusPayload,
+  getStatusMeta,
+} = require("../constants/orderStatus");
 
+/** @deprecated use buildOrderStatusPayload */
 const CUSTOMER_STATUS = {
   PLACED: "ORDER_RECEIVED",
   ACCEPTED: "ACCEPTED",
@@ -8,7 +13,7 @@ const CUSTOMER_STATUS = {
   READY: "READY_FOR_PICKUP",
   OUT_FOR_DELIVERY: "ON_ROUTE",
   DELIVERED: "DELIVERED",
-  CANCELLED: "CANCELLED"
+  CANCELLED: "CANCELLED",
 };
 
 const activeLocks = new Map();
@@ -20,24 +25,69 @@ const cleanupExpiredLock = (key) => {
   }
 };
 
-const getCustomerStatus = (order) => CUSTOMER_STATUS[order?.status] || order?.status || null;
+const getCustomerStatus = (order) =>
+  getStatusMeta(order?.status).displayStatus || order?.status || null;
+
+const getIO = () => global.io || null;
+
+const emitOrderUpdate = (io, order, eventType = "ORDER_STATUS_UPDATED", extra = {}) => {
+  if (!io || !order) return;
+
+  const payload = {
+    type: eventType,
+    order: order.toObject ? order.toObject() : order,
+    ...buildOrderStatusPayload(order, extra),
+  };
+
+  const userId = order.user?._id || order.user;
+  const partnerId = order.partner?._id || order.partner;
+  const driverId = order.deliveryAgent?._id || order.deliveryAgent;
+
+  if (userId) {
+    io.to(`user_${userId}`).emit("order_update", payload);
+    io.to(`user_${userId}`).emit("order_status_update", {
+      orderId: order._id,
+      status: payload.displayStatus,
+      internalStatus: order.status,
+      timeline: order.timeline,
+      title: payload.title,
+      subtitle: payload.subtitle,
+    });
+  }
+
+  if (partnerId) {
+    io.to(`kitchen_${partnerId}`).emit("order_update", payload);
+  }
+
+  if (driverId) {
+    io.to(`delivery_${driverId}`).emit("order_update", payload);
+  }
+
+  io.to(`order_${order._id}`).emit("order_update", payload);
+  io.to("admin_orders").emit("order_update", payload);
+};
 
 const emitOrderStatusUpdate = (io, order) => {
-  if (!io || !order?.user) return;
-
-  io.to(`user_${order.user}`).emit("order_status_update", {
-    orderId: order._id,
-    status: getCustomerStatus(order),
-    internalStatus: order.status,
-    timeline: order.timeline
-  });
+  emitOrderUpdate(io, order, "ORDER_STATUS_UPDATED");
 };
 
 const publishOrderEvent = async (event) => {
-  logger.debug("Order event published locally", {
-    type: event?.type,
-    orderId: event?.order?._id
+  const io = getIO();
+  const { type, order, updatedBy, driverId } = event || {};
+
+  logger.info("Order event published", {
+    type,
+    orderId: order?._id,
+    updatedBy,
   });
+
+  if (io && order) {
+    emitOrderUpdate(io, order, type || "ORDER_STATUS_UPDATED", {
+      updatedBy: updatedBy || null,
+      driverId: driverId || order.deliveryAgent || null,
+    });
+  }
+
   return event;
 };
 
@@ -54,7 +104,7 @@ const acquireOrderLock = async (orderId, action, ttlSeconds = 15) => {
   const value = `${process.pid}:${crypto.randomUUID()}`;
   activeLocks.set(key, {
     value,
-    expiresAt: Date.now() + ttlSeconds * 1000
+    expiresAt: Date.now() + ttlSeconds * 1000,
   });
 
   return { key, value };
@@ -71,23 +121,25 @@ const releaseOrderLock = async (lock) => {
 };
 
 const setDriverPresence = async () => null;
-const setPartnerPresence = async () => null;
 const setDriverAssignment = async () => null;
 const clearDriverAssignment = async () => null;
 const removeDriverReadyOrder = async () => null;
-
+const setPartnerPresence = async () => null;
 const startOrderEventBridge = async () => null;
 
 module.exports = {
   CUSTOMER_STATUS,
   acquireOrderLock,
+  buildOrderStatusPayload,
   clearDriverAssignment,
   emitOrderStatusUpdate,
+  emitOrderUpdate,
   publishOrderEvent,
   releaseOrderLock,
   removeDriverReadyOrder,
   setDriverAssignment,
   setDriverPresence,
   setPartnerPresence,
-  startOrderEventBridge
+  startOrderEventBridge,
+  getCustomerStatus,
 };

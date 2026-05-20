@@ -44,7 +44,7 @@ const scheduleSubscriptionDeliveries = async (userSubscription) => {
     deliveries.push({
       userSubscriptionId: userSubscription._id,
       deliveryDate: new Date(userSubscription.startDate.getTime() + i * DAY_MS),
-      status: "PENDING"
+      status: "PENDING_PARTNER"
     });
   }
 
@@ -306,7 +306,7 @@ exports.getUpcomingSubscriptionDeliveries = async (req, res) => {
     const deliveries = await SubscriptionDelivery.find({
       userSubscriptionId: { $in: ids },
       deliveryDate: { $gte: now },
-      status: "PENDING"
+      status: "PENDING_PARTNER"
     })
       .populate({
         path: "userSubscriptionId",

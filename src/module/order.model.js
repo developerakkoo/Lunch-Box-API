@@ -25,7 +25,17 @@ const orderSchema = new mongoose.Schema(
       default: null,
     },
 
+    orderType: {
+      type: String,
+      enum: ["INSTANT", "SUBSCRIPTION"],
+      default: "INSTANT",
+    },
 
+    subscriptionDeliveryId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "SubscriptionDelivery",
+      default: null,
+    },
 
     /*
     |--------------------------------------------------------------------------
@@ -149,6 +159,15 @@ const orderSchema = new mongoose.Schema(
       pickedAt: Date,
       deliveredAt: Date,
       cancelledAt: Date,
+    },
+
+    deliveryProof: {
+      imageUrl: String,
+      uploadedAt: Date,
+      uploadedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "DeliveryAgent",
+      },
     },
 
 

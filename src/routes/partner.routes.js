@@ -207,6 +207,10 @@ router.get('/orders/summary', auth, controller.getKitchenOrdersSummary)
  */
 router.get('/subscription-orders', auth, controller.getSubscriptionOrdersByStatus)
 
+const subDeliveryController = require('../controller/subscriptionDelivery.controller');
+router.get('/subscription-deliveries', auth, subDeliveryController.partnerListDeliveries);
+router.patch('/subscription-deliveries/:id/action', auth, subDeliveryController.partnerDeliveryAction);
+
 /**
  * @swagger
  * /api/partner/kitchen/status:

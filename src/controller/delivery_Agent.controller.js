@@ -528,9 +528,20 @@ exports.completeOrder = async (req, res) => {
       return res.status(400).json({ message: "Only out for delivery orders can be completed" });
     }
 
+    const { getUploadedFileName } = require("../utils/media");
+    const proofFile = getUploadedFileName(req.file);
+    if (!proofFile) {
+      return res.status(400).json({ message: "Delivery proof photo is required" });
+    }
+
     order.status = "DELIVERED";
     order.timeline = order.timeline || {};
     order.timeline.deliveredAt = new Date();
+    order.deliveryProof = {
+      imageUrl: proofFile,
+      uploadedAt: new Date(),
+      uploadedBy: agent._id,
+    };
 
     if (order.payment?.method === "COD") {
       order.payment.paymentStatus = "PAID";
