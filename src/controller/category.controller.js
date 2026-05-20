@@ -7,6 +7,8 @@ const {
   getUploadedFileName,
   parsePossiblyJsonArray
 } = require("../utils/media");
+const { deleteUploadedFile } = require("../utils/fileStorage");
+const { emitCatalogUpdated } = require("../utils/catalogEvents");
 
 const getRequestedPartnerId = (req) =>
   req.body?.partnerId ||
@@ -90,6 +92,10 @@ exports.createCategory = async (req, res) => {
       partner: partnerId,
     });
 
+    if (!partnerId) {
+      emitCatalogUpdated("category", "create");
+    }
+
     res.status(201).json({
       message: "Category created successfully",
       data: category,
@@ -158,14 +164,23 @@ exports.updateCategory = async (req, res) => {
         ? { _id: id, $or: [{ partner: partnerId }, { partner: null }] }
         : { _id: id };
 
+    const existing = await Category.findOne(filter);
+    if (!existing) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+
+    if (uploadedImage && existing.image) {
+      deleteUploadedFile(existing.image);
+    }
+
     const category = await Category.findOneAndUpdate(
       filter,
       updatePayload,
       { new: true }
     );
 
-    if (!category) {
-      return res.status(404).json({ message: "Category not found" });
+    if (!category.partner) {
+      emitCatalogUpdated("category", "update");
     }
 
     res.status(200).json({
@@ -200,6 +215,14 @@ exports.deleteCategory = async (req, res) => {
 
     if (!category) {
       return res.status(404).json({ message: "Category not found" });
+    }
+
+    if (category.image) {
+      deleteUploadedFile(category.image);
+    }
+
+    if (!category.partner) {
+      emitCatalogUpdated("category", "delete");
     }
 
     res.status(200).json({

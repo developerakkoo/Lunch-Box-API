@@ -58,6 +58,7 @@ router.post("/create", adminAuth, upload.single("image"), controller.createBanne
  */
 router.get("/list", adminAuth, controller.getBanners);
 
+router.put("/:id", adminAuth, upload.single("image"), controller.updateBanner);
 
 /**
  * @swagger

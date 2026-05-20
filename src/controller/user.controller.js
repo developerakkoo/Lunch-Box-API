@@ -57,127 +57,177 @@ const createWalletLedgerEntry = async ({
 };
 
 
-/* ================= LOGIN / REGISTER USER ================= */
+const issueUserTokens = async (user) => {
+  if (!user.referralCode) {
+    user.referralCode = await generateReferralCode(user.fullName || "USER");
+  }
+  const accessToken = generateAccessToken(user);
+  const refreshToken = generateRefreshToken(user);
+  user.refreshToken = refreshToken;
+  await user.save();
+  return { accessToken, refreshToken, user };
+};
+
+/* ================= LOGIN (mobile only) ================= */
 
 exports.loginUser = async (req, res) => {
   try {
+    const { countryCode, mobileNumber } = req.body;
 
+    if (!mobileNumber) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Mobile number is required",
+      });
+    }
+
+    const user = await User.findOne({ mobileNumber });
+
+    if (!user) {
+      return res.status(200).json({
+        statusCode: 200,
+        message: "Registration required",
+        data: {
+          requiresRegistration: true,
+          countryCode: countryCode || "+91",
+          mobileNumber,
+        },
+      });
+    }
+
+    const tokens = await issueUserTokens(user);
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Login successful",
+      data: {
+        userId: tokens.user._id,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        user: tokens.user,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      statusCode: 500,
+      message: error.message,
+    });
+  }
+};
+
+/* ================= REGISTER USER ================= */
+
+exports.registerUser = async (req, res) => {
+  try {
     const { countryCode, mobileNumber, fullName, email, referralCode } = req.body;
 
     if (!mobileNumber) {
       return res.status(400).json({
         statusCode: 400,
-        message: "Mobile number is required"
+        message: "Mobile number is required",
       });
     }
 
-    let user = await User.findOne({ mobileNumber });
+    if (!fullName) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Full name is required",
+      });
+    }
 
-    /* ===== NEW USER ===== */
+    const existing = await User.findOne({ mobileNumber });
+    if (existing) {
+      const tokens = await issueUserTokens(existing);
+      return res.status(200).json({
+        statusCode: 200,
+        message: "Login successful",
+        data: {
+          userId: tokens.user._id,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          user: tokens.user,
+        },
+      });
+    }
 
-    if (!user) {
+    let referredBy = null;
+    let referrer = null;
 
-      if (!fullName || !email) {
+    if (referralCode) {
+      referrer = await User.findOne({ referralCode: referralCode.toUpperCase() });
+      if (!referrer) {
         return res.status(400).json({
           statusCode: 400,
-          message: "Full name and email required for new user"
+          message: "Invalid referral code",
         });
       }
-
-      let referredBy = null;
-      let referrer = null;
-
-      if (referralCode) {
-        referrer = await User.findOne({ referralCode: referralCode.toUpperCase() });
-        if (!referrer) {
-          return res.status(400).json({
-            statusCode: 400,
-            message: "Invalid referral code"
-          });
-        }
-        referredBy = referrer.referralCode;
-      }
-
-      user = await User.create({
-        countryCode: countryCode || "+91",
-        mobileNumber,
-        fullName,
-        email,
-        referralCode: await generateReferralCode(fullName),
-        referredBy,
-        isRegistered: true
-      });
-
-      if (referrer) {
-        const referrerBefore = referrer.walletBalance || 0;
-        referrer.walletBalance = referrerBefore + REFERRAL_REWARD_REFERRER;
-        referrer.referralEarnings = (referrer.referralEarnings || 0) + REFERRAL_REWARD_REFERRER;
-        referrer.referralCount = (referrer.referralCount || 0) + 1;
-        await referrer.save();
-
-        await createWalletLedgerEntry({
-          userId: referrer._id,
-          type: "CREDIT",
-          source: "REFERRAL_BONUS",
-          amount: REFERRAL_REWARD_REFERRER,
-          balanceBefore: referrerBefore,
-          balanceAfter: referrer.walletBalance,
-          gateway: "SYSTEM",
-          referenceType: "User",
-          referenceId: user._id,
-          notes: `Referral bonus for inviting ${user.mobileNumber}`
-        });
-
-        const newUserBefore = user.walletBalance || 0;
-        user.walletBalance = newUserBefore + REFERRAL_REWARD_NEW_USER;
-        await user.save();
-
-        await createWalletLedgerEntry({
-          userId: user._id,
-          type: "CREDIT",
-          source: "REFERRAL_BONUS",
-          amount: REFERRAL_REWARD_NEW_USER,
-          balanceBefore: newUserBefore,
-          balanceAfter: user.walletBalance,
-          gateway: "SYSTEM",
-          referenceType: "User",
-          referenceId: referrer._id,
-          notes: "Referral signup bonus"
-        });
-      }
-
-      console.log("New user created:", user._id);
+      referredBy = referrer.referralCode;
     }
 
-    if (!user.referralCode) {
-      user.referralCode = await generateReferralCode(user.fullName);
-    }
-
-    /* ===== GENERATE TOKENS ===== */
-
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
-
-    user.refreshToken = refreshToken;
-    await user.save();
-
-    return res.status(user.isNew ? 201 : 200).json({
-      statusCode: 200,
-      message: "Login successful",
-      data: {
-        userId: user._id,
-        accessToken,
-        refreshToken,
-        user
-      }
+    let user = await User.create({
+      countryCode: countryCode || "+91",
+      mobileNumber,
+      fullName,
+      email: email || undefined,
+      referralCode: await generateReferralCode(fullName),
+      referredBy,
+      isRegistered: true,
     });
 
-  } catch (error) {
-    console.log("🔥 Login Error:", error.message);
+    if (referrer) {
+      const referrerBefore = referrer.walletBalance || 0;
+      referrer.walletBalance = referrerBefore + REFERRAL_REWARD_REFERRER;
+      referrer.referralEarnings = (referrer.referralEarnings || 0) + REFERRAL_REWARD_REFERRER;
+      referrer.referralCount = (referrer.referralCount || 0) + 1;
+      await referrer.save();
 
+      await createWalletLedgerEntry({
+        userId: referrer._id,
+        type: "CREDIT",
+        source: "REFERRAL_BONUS",
+        amount: REFERRAL_REWARD_REFERRER,
+        balanceBefore: referrerBefore,
+        balanceAfter: referrer.walletBalance,
+        gateway: "SYSTEM",
+        referenceType: "User",
+        referenceId: user._id,
+        notes: `Referral bonus for inviting ${user.mobileNumber}`,
+      });
+
+      const newUserBefore = user.walletBalance || 0;
+      user.walletBalance = newUserBefore + REFERRAL_REWARD_NEW_USER;
+      await user.save();
+
+      await createWalletLedgerEntry({
+        userId: user._id,
+        type: "CREDIT",
+        source: "REFERRAL_BONUS",
+        amount: REFERRAL_REWARD_NEW_USER,
+        balanceBefore: newUserBefore,
+        balanceAfter: user.walletBalance,
+        gateway: "SYSTEM",
+        referenceType: "User",
+        referenceId: referrer._id,
+        notes: "Referral signup bonus",
+      });
+    }
+
+    const tokens = await issueUserTokens(user);
+
+    return res.status(201).json({
+      statusCode: 201,
+      message: "Registration successful",
+      data: {
+        userId: tokens.user._id,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        user: tokens.user,
+      },
+    });
+  } catch (error) {
     res.status(500).json({
       statusCode: 500,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -441,6 +491,29 @@ const haversineDistanceKm = (lat1, lon1, lat2, lon2) => {
   return earthRadiusKm * c;
 };
 
+exports.getPublicCategories = async (req, res) => {
+  try {
+    const categories = await Category.find({
+      partner: null,
+      isActive: true,
+    })
+      .select("name description image")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Categories fetched successfully",
+      data: categories,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      statusCode: 500,
+      message: error.message,
+    });
+  }
+};
+
 exports.getNearbyKitchens = async (req, res) => {
   try {
     const {
@@ -448,6 +521,7 @@ exports.getNearbyKitchens = async (req, res) => {
       longitude,
       radiusKm = 10,
       search = "",
+      categoryId,
       page = 1,
       limit = 20
     } = req.query;
@@ -459,6 +533,14 @@ exports.getNearbyKitchens = async (req, res) => {
 
     if (search) {
       filter.kitchenName = { $regex: search, $options: "i" };
+    }
+
+    if (categoryId) {
+      const partnerIds = await MenuItem.distinct("partner", {
+        category: categoryId,
+        isAvailable: true,
+      });
+      filter._id = { $in: partnerIds };
     }
 
     const kitchens = await Partner.find(filter)

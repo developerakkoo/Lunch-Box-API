@@ -27,6 +27,20 @@ const auth = require("../middlewares/auth.middleware");
  *         description: Login successful
  */
 router.post("/login", controller.loginUser);
+router.post("/register", controller.registerUser);
+router.post("/refresh-token", controller.refreshAccessToken);
+
+/**
+ * @swagger
+ * /api/user/categories:
+ *   get:
+ *     summary: Get platform categories for customer home
+ *     tags: [User]
+ *     responses:
+ *       200:
+ *         description: Categories fetched
+ */
+router.get("/categories", controller.getPublicCategories);
 
 /**
  * @swagger
