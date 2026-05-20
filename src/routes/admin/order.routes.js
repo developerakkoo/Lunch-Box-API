@@ -120,6 +120,7 @@ router.get("/orders/:orderId", adminAuth, controller.getOrderDetails);
  *       200:
  *         description: Order cancelled successfully
  */
+router.patch("/orders/:orderId/status", adminAuth, controller.updateOrderStatus);
 router.patch("/orders/:orderId/cancel", adminAuth, controller.cancelOrder);
 
 module.exports = router;

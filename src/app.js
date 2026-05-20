@@ -63,6 +63,10 @@ const adminBannerRoutes = require("./routes/admin/banner.routes");
 const adminCategoryRoutes = require("./routes/admin/category.routes");
 const adminKitchenRoutes = require("./routes/admin/kitchen.routes");
 const adminOrderRoutes = require("./routes/admin/order.routes");
+const adminUserRoutes = require("./routes/admin/user.routes");
+const adminSubscriptionRoutes = require("./routes/admin/subscription.routes");
+const adminNotificationRoutes = require("./routes/admin/notification.routes");
+const adminSettingsRoutes = require("./routes/admin/settings.routes");
 
 /* -------------------------------------------------------------------------- */
 /*                                HEALTH CHECK                                */
@@ -95,6 +99,10 @@ app.use("/api/admin/banner", adminBannerRoutes);
 app.use("/api/admin/category", adminCategoryRoutes);
 app.use("/api/admin", adminKitchenRoutes);
 app.use("/api/admin", adminOrderRoutes);
+app.use("/api/admin", adminUserRoutes);
+app.use("/api/admin", adminSubscriptionRoutes);
+app.use("/api/admin", adminNotificationRoutes);
+app.use("/api/admin", adminSettingsRoutes);
 
 /* -------------------------------------------------------------------------- */
 /*                              404 ROUTE HANDLER                             */

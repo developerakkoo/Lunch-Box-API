@@ -78,6 +78,11 @@ const userSchema = new mongoose.Schema(
       default: false
     },
 
+    isBlocked: {
+      type: Boolean,
+      default: false
+    },
+
     refreshToken: String
   },
   { timestamps: true }

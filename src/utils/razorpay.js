@@ -1,20 +1,26 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 
-const instance = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || '',
-  key_secret: process.env.RAZORPAY_KEY_SECRET || ''
-});
+function getRazorpayInstance() {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keyId || !keySecret) {
+    return null;
+  }
+  return new Razorpay({ key_id: keyId, key_secret: keySecret });
+}
 
 async function createOrder(amount, currency = 'INR', receipt = undefined) {
+  const instance = getRazorpayInstance();
+  if (!instance) {
+    throw new Error('Razorpay is not configured (set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET)');
+  }
   const options = {
-    amount: Math.round(amount), // amount in paise (if already multiplied by 100)
+    amount: Math.round(amount),
     currency,
-    receipt: receipt || `rcpt_${Date.now()}`
+    receipt: receipt || `rcpt_${Date.now()}`,
   };
-
-  const order = await instance.orders.create(options);
-  return order;
+  return instance.orders.create(options);
 }
 
 function verifySignature({ razorpay_order_id, razorpay_payment_id, razorpay_signature }) {

@@ -16,6 +16,7 @@ exports.getAllOrders = async (req, res) => {
     const {
       search = "",
       status,
+      statusIn,
       paymentStatus,
       paymentMethod,
       partnerId,
@@ -31,7 +32,15 @@ exports.getAllOrders = async (req, res) => {
     const limitNumber = Math.max(Number(limit) || 20, 1);
     const query = {};
 
-    if (status) query.status = status;
+    if (statusIn) {
+      const statuses = String(statusIn)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (statuses.length) query.status = { $in: statuses };
+    } else if (status) {
+      query.status = status;
+    }
     if (paymentStatus) query["payment.paymentStatus"] = paymentStatus;
     if (paymentMethod) query["payment.method"] = paymentMethod;
     if (partnerId && isValidObjectId(partnerId)) query.partner = partnerId;
@@ -123,6 +132,68 @@ exports.getOrderDetails = async (req, res) => {
 
     return res.status(200).json({
       message: "Order details fetched successfully",
+      data: order
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.updateOrderStatus = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body || {};
+
+    if (!isValidObjectId(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    const allowed = [
+      "PLACED",
+      "ACCEPTED",
+      "PREPARING",
+      "READY",
+      "OUT_FOR_DELIVERY",
+      "DELIVERED",
+      "CANCELLED"
+    ];
+
+    if (!status || !allowed.includes(status)) {
+      return res.status(400).json({ message: "Valid status is required" });
+    }
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (CLOSED_ORDER_STATUSES.includes(order.status) && status !== order.status) {
+      return res.status(409).json({ message: `Order already ${order.status.toLowerCase()}` });
+    }
+
+    const now = new Date();
+    order.status = status;
+    order.timeline = order.timeline || {};
+
+    if (status === "PLACED") order.timeline.placedAt = order.timeline.placedAt || now;
+    if (status === "ACCEPTED") order.timeline.acceptedAt = now;
+    if (status === "PREPARING") order.timeline.preparingAt = now;
+    if (status === "READY") order.timeline.readyAt = now;
+    if (status === "OUT_FOR_DELIVERY") order.timeline.pickedAt = now;
+    if (status === "DELIVERED") order.timeline.deliveredAt = now;
+    if (status === "CANCELLED") order.timeline.cancelledAt = now;
+
+    await order.save();
+
+    await publishOrderEvent({
+      type: "ORDER_STATUS_UPDATED",
+      order,
+      updatedBy: "ADMIN"
+    });
+
+    return res.status(200).json({
+      message: "Order status updated successfully",
       data: order
     });
   } catch (error) {

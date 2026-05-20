@@ -43,13 +43,13 @@ exports.loginAdmin = async (req, res) => {
     const admin = await Admin.findOne({ email });
 
     if (!admin) {
-      return res.status(404).json({ message: "Admin not found" });
+      return res.status(401).json({ message: "Admin not found. Register first or check your email." });
     }
 
     const isMatch = await bcrypt.compare(password, admin.password);
 
     if (!isMatch) {
-      return res.status(400).json({ message: "Invalid password" });
+      return res.status(401).json({ message: "Invalid password" });
     }
 
     const token = jwt.sign(
@@ -57,7 +57,10 @@ exports.loginAdmin = async (req, res) => {
       process.env.JWT_SECRET
     );
 
-    return res.json({ token });
+    return res.json({
+      token,
+      admin: { name: admin.name, email: admin.email, role: admin.role },
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -214,6 +217,93 @@ exports.updateKitchenStatus = async (req, res) => {
     return res.status(200).json({
       message: "Kitchen status updated successfully",
       data: kitchen
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getProfile = async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.admin.id).select("-password");
+    if (!admin) {
+      return res.status(404).json({ message: "Admin not found" });
+    }
+    return res.status(200).json({ data: admin });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.updateProfile = async (req, res) => {
+  try {
+    const { name, email } = req.body || {};
+    const admin = await Admin.findById(req.admin.id);
+    if (!admin) {
+      return res.status(404).json({ message: "Admin not found" });
+    }
+    if (name) admin.name = name;
+    if (email) admin.email = email;
+    await admin.save();
+    return res.status(200).json({
+      message: "Profile updated",
+      data: { _id: admin._id, name: admin.name, email: admin.email, role: admin.role }
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: "Current and new password required" });
+    }
+    const admin = await Admin.findById(req.admin.id);
+    if (!admin) {
+      return res.status(404).json({ message: "Admin not found" });
+    }
+    const isMatch = await bcrypt.compare(currentPassword, admin.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Current password is incorrect" });
+    }
+    admin.password = newPassword;
+    await admin.save();
+    return res.status(200).json({ message: "Password updated successfully" });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.listAdmins = async (req, res) => {
+  try {
+    const admins = await Admin.find().select("-password").sort({ createdAt: -1 });
+    return res.status(200).json({ data: admins });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.createAdminProtected = async (req, res) => {
+  try {
+    const { name, email, password, role } = req.body || {};
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: "Name, email and password required" });
+    }
+    const exists = await Admin.findOne({ email });
+    if (exists) {
+      return res.status(400).json({ message: "Admin already exists" });
+    }
+    const admin = await Admin.create({
+      name,
+      email,
+      password,
+      role: role === "SUB_ADMIN" ? "SUB_ADMIN" : "SUPER_ADMIN"
+    });
+    return res.status(201).json({
+      message: "Admin created",
+      data: { _id: admin._id, name: admin.name, email: admin.email, role: admin.role }
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
