@@ -63,6 +63,7 @@ const adminBannerRoutes = require("./routes/admin/banner.routes");
 const adminCategoryRoutes = require("./routes/admin/category.routes");
 const adminKitchenRoutes = require("./routes/admin/kitchen.routes");
 const adminOrderRoutes = require("./routes/admin/order.routes");
+const adminDriverRoutes = require("./routes/admin/driver.routes");
 const adminUserRoutes = require("./routes/admin/user.routes");
 const adminSubscriptionRoutes = require("./routes/admin/subscription.routes");
 const adminNotificationRoutes = require("./routes/admin/notification.routes");
@@ -94,6 +95,7 @@ app.use("/api/cart", createCart);
 /* ----------------------------- ADMIN ROUTES -------------------------------- */
 
 app.use("/api/admin", adminAuthRoutes);
+app.use("/api/admin", adminDriverRoutes);
 app.use("/api/admin/dashboard", adminDashboardRoutes);
 app.use("/api/admin/banner", adminBannerRoutes);
 app.use("/api/admin/category", adminCategoryRoutes);

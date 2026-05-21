@@ -194,9 +194,31 @@ const deliveryAgentSchema = new mongoose.Schema(
       enum: ["PENDING", "APPROVED", "REJECTED", "BLOCKED"],
       default: "PENDING",
     },
+
+    rejectionReason: {
+      type: String,
+      default: "",
+    },
+
+    reviewedAt: Date,
+
+    reviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      default: null,
+    },
+
+    deletedAt: Date,
   },
   { timestamps: true }
 );
+
+deliveryAgentSchema.set("toJSON", {
+  transform(_doc, ret) {
+    delete ret.password;
+    return ret;
+  },
+});
 
 
 

@@ -12,7 +12,8 @@ async function assignDeliveryBoy(order) {
   const availableBoy = await DeliveryAgent.findOne({
     isOnline: true,
     isAvailable: true,
-    status: { $in: ["APPROVED", "PENDING"] }
+    status: "APPROVED",
+    deletedAt: null,
   });
 
   if (!availableBoy) {

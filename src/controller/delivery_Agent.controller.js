@@ -23,13 +23,6 @@ const {
 const getDriverIdFromReq = (req) => req?.driver?.id;
 const ACTIVE_DELIVERY_STATUSES = ["READY", "OUT_FOR_DELIVERY"];
 
-const findAgentFromToken = async (driverId) => {
-  if (!driverId) return null;
-  const agent = await DeliveryAgent.findById(driverId);
-  if (agent) return agent;
-  return DeliveryAgent.findOne({ user: driverId });
-};
-
 const syncAgentAvailability = async (agent) => {
   if (!agent) return null;
 
@@ -91,12 +84,13 @@ exports.registerDriver = async (req, res) => {
       address,
       vehicle,
       documents,
-      profileCompleted: true
+      profileCompleted: true,
+      status: "PENDING",
     });
 
     return res.status(201).json({
       message: "Driver registered successfully",
-      data: driver
+      data: driver.toJSON(),
     });
   } catch (error) {
     logger.error("Driver registration failed", { message: error.message });
@@ -114,6 +108,13 @@ exports.loginDriver = async (req, res) => {
       return res.status(404).json({ message: "Driver not found" });
     }
 
+    if (driver.deletedAt) {
+      return res.status(403).json({
+        message: "This account is no longer active.",
+        code: "ACCOUNT_DELETED",
+      });
+    }
+
     const isMatch = await bcrypt.compare(password, driver.password);
     if (!isMatch) {
       return res.status(400).json({ message: "Invalid credentials" });
@@ -126,7 +127,7 @@ exports.loginDriver = async (req, res) => {
     return res.status(200).json({
       message: "Login successful",
       token,
-      driver
+      driver: driver.toJSON(),
     });
   } catch (error) {
     logger.error("Driver login failed", { message: error.message });
@@ -136,12 +137,9 @@ exports.loginDriver = async (req, res) => {
 
 exports.getProfile = async (req, res) => {
   try {
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
-
     return res.status(200).json({
       message: "Profile fetched successfully",
-      data: agent
+      data: req.deliveryAgent,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -150,8 +148,13 @@ exports.getProfile = async (req, res) => {
 
 exports.updateProfile = async (req, res) => {
   try {
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
+    if (["REJECTED", "BLOCKED"].includes(agent.status)) {
+      return res.status(403).json({
+        message: "Profile cannot be updated for this account.",
+        code: agent.status === "REJECTED" ? "ACCOUNT_REJECTED" : "ACCOUNT_BLOCKED",
+      });
+    }
 
     const {
       fullName,
@@ -173,7 +176,7 @@ exports.updateProfile = async (req, res) => {
 
     return res.status(200).json({
       message: "Profile updated successfully",
-      data: agent
+      data: agent.toJSON(),
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -183,8 +186,7 @@ exports.updateProfile = async (req, res) => {
 exports.toggleOnlineStatus = async (req, res) => {
   try {
     logger.info("Driver toggle online request", { driverId: getDriverIdFromReq(req) });
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     agent.isOnline = !agent.isOnline;
     if (agent.isOnline) {
@@ -226,8 +228,7 @@ exports.updateAvailabilityStatus = async (req, res) => {
       return res.status(400).json({ message: "status must be ACTIVE or INACTIVE" });
     }
 
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     agent.isOnline = status === "ACTIVE";
     await syncAgentAvailability(agent);
@@ -268,8 +269,7 @@ exports.updateLiveLocation = async (req, res) => {
       return res.status(400).json({ message: "latitude and longitude are required" });
     }
 
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     agent.liveLocation = {
       latitude,
@@ -297,8 +297,7 @@ exports.updateLiveLocation = async (req, res) => {
 exports.getOrdersByDeliveryStatus = async (req, res) => {
   try {
     logger.debug("Driver orders request", { driverId: getDriverIdFromReq(req), status: req.query?.status });
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     const { status = "PENDING", page = 1, limit = 20 } = req.query;
     const map = {
@@ -353,8 +352,7 @@ exports.acceptOrder = async (req, res) => {
   try {
     logger.info("Driver accept order request", { orderId: req.params.orderId, driverId: getDriverIdFromReq(req) });
     const { orderId } = req.params;
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
     await syncAgentAvailability(agent);
 
     if (!agent.isOnline) return res.status(400).json({ message: "Agent offline" });
@@ -422,8 +420,7 @@ exports.rejectOrder = async (req, res) => {
     const { orderId } = req.params;
     const { reason = "Rejected by delivery agent" } = req.body || {};
 
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -476,8 +473,7 @@ exports.pickOrder = async (req, res) => {
   try {
     logger.info("Driver pick order request", { orderId: req.params.orderId, driverId: getDriverIdFromReq(req) });
     const { orderId } = req.params;
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -516,8 +512,7 @@ exports.completeOrder = async (req, res) => {
   try {
     logger.info("Driver complete order request", { orderId: req.params.orderId, driverId: getDriverIdFromReq(req) });
     const { orderId } = req.params;
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -585,8 +580,7 @@ exports.completeOrder = async (req, res) => {
 exports.getRouteDetails = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     const order = await Order.findById(orderId)
       .populate("partner", "kitchenName address latitude longitude")
@@ -624,8 +618,7 @@ exports.getRouteDetails = async (req, res) => {
 exports.getCustomerContact = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     const order = await Order.findById(orderId).populate("user", "fullName mobileNumber");
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -649,8 +642,7 @@ exports.getCustomerContact = async (req, res) => {
 
 exports.getNotifications = async (req, res) => {
   try {
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     const { page = 1, limit = 20 } = req.query;
     const pageNumber = Math.max(Number(page) || 1, 1);
@@ -678,8 +670,7 @@ exports.getNotifications = async (req, res) => {
 
 exports.markNotificationRead = async (req, res) => {
   try {
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     const { notificationId } = req.params;
     const notification = await DeliveryNotification.findOneAndUpdate(
@@ -703,8 +694,7 @@ exports.markNotificationRead = async (req, res) => {
 
 exports.markAllNotificationsRead = async (req, res) => {
   try {
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     await DeliveryNotification.updateMany(
       { deliveryAgentId: agent._id, isRead: false },
@@ -721,8 +711,7 @@ exports.markAllNotificationsRead = async (req, res) => {
 
 exports.getDashboard = async (req, res) => {
   try {
-    const agent = await findAgentFromToken(getDriverIdFromReq(req));
-    if (!agent) return res.status(404).json({ message: "Agent profile not found" });
+    const agent = req.deliveryAgent;
 
     const [totalDeliveredOrders, grossSalesResult, cashAmountResult, tipsEarnedResult, rejectedOrders, ordersReceived] =
       await Promise.all([

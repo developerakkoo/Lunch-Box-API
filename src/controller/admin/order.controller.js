@@ -146,21 +146,6 @@ exports.getOrderDetails = async (req, res) => {
   }
 };
 
-exports.listDeliveryAgents = async (req, res) => {
-  try {
-    const agents = await DeliveryAgent.find({})
-      .select("fullName mobileNumber email status isOnline isAvailable currentOrder")
-      .sort({ fullName: 1 })
-      .limit(200);
-    return res.status(200).json({
-      message: "Delivery agents fetched",
-      data: agents,
-    });
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
-  }
-};
-
 exports.assignDriver = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -210,6 +195,16 @@ exports.assignDriver = async (req, res) => {
     const agent = await DeliveryAgent.findById(deliveryAgentId);
     if (!agent) {
       return res.status(404).json({ message: "Delivery agent not found" });
+    }
+
+    if (agent.deletedAt) {
+      return res.status(400).json({ message: "This driver account is archived" });
+    }
+
+    if (agent.status !== "APPROVED") {
+      return res.status(400).json({
+        message: "Only approved drivers can be assigned to an order",
+      });
     }
 
     order.deliveryAgent = agent._id;

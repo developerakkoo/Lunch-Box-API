@@ -15,6 +15,8 @@ const deliveryNotificationSchema = new mongoose.Schema(
         "ORDER_ACCEPTED",
         "ORDER_REJECTED",
         "ORDER_COMPLETED",
+        "ACCOUNT_APPROVED",
+        "ACCOUNT_REJECTED",
         "SYSTEM"
       ],
       default: "SYSTEM"

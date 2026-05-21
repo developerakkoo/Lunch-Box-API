@@ -1,6 +1,8 @@
 const router = require("express").Router();
 const controller = require("../controller/delivery_Agent.controller");
 const driverAuth = require("../middlewares/driverAuth.middleware");
+const attachDeliveryAgent = require("../middlewares/attachDeliveryAgent.middleware");
+const requireApprovedDriver = require("../middlewares/requireApprovedDriver.middleware");
 const { upload } = require("../middlewares/upload.middleware");
 
 /**
@@ -58,7 +60,7 @@ router.post("/login", controller.loginDriver);
  *       200:
  *         description: Driver profile fetched
  */
-router.get("/profile", driverAuth, controller.getProfile);
+router.get("/profile", driverAuth, attachDeliveryAgent, controller.getProfile);
 
 /**
  * @swagger
@@ -78,7 +80,7 @@ router.get("/profile", driverAuth, controller.getProfile);
  *       200:
  *         description: Driver profile updated
  */
-router.patch("/profile", driverAuth, controller.updateProfile);
+router.patch("/profile", driverAuth, attachDeliveryAgent, controller.updateProfile);
 
 /**
  * @swagger
@@ -92,7 +94,7 @@ router.patch("/profile", driverAuth, controller.updateProfile);
  *       200:
  *         description: Driver status updated
  */
-router.put("/toggle-online", driverAuth, controller.toggleOnlineStatus);
+router.put("/toggle-online", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.toggleOnlineStatus);
 
 /**
  * @swagger
@@ -112,7 +114,7 @@ router.put("/toggle-online", driverAuth, controller.toggleOnlineStatus);
  *       200:
  *         description: Availability status updated
  */
-router.patch("/availability", driverAuth, controller.updateAvailabilityStatus);
+router.patch("/availability", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.updateAvailabilityStatus);
 
 /**
  * @swagger
@@ -140,7 +142,7 @@ router.patch("/availability", driverAuth, controller.updateAvailabilityStatus);
  *       200:
  *         description: Location updated successfully
  */
-router.put("/update-location", driverAuth, controller.updateLiveLocation);
+router.put("/update-location", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.updateLiveLocation);
 
 /**
  * @swagger
@@ -161,7 +163,7 @@ router.put("/update-location", driverAuth, controller.updateLiveLocation);
  *       200:
  *         description: Orders fetched
  */
-router.get("/orders", driverAuth, controller.getOrdersByDeliveryStatus);
+router.get("/orders", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.getOrdersByDeliveryStatus);
 
 /**
  * @swagger
@@ -181,7 +183,7 @@ router.get("/orders", driverAuth, controller.getOrdersByDeliveryStatus);
  *       200:
  *         description: Route details fetched
  */
-router.get("/orders/:orderId/route", driverAuth, controller.getRouteDetails);
+router.get("/orders/:orderId/route", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.getRouteDetails);
 
 /**
  * @swagger
@@ -201,7 +203,7 @@ router.get("/orders/:orderId/route", driverAuth, controller.getRouteDetails);
  *       200:
  *         description: Customer contact fetched
  */
-router.get("/orders/:orderId/customer-contact", driverAuth, controller.getCustomerContact);
+router.get("/orders/:orderId/customer-contact", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.getCustomerContact);
 
 /**
  * @swagger
@@ -221,7 +223,7 @@ router.get("/orders/:orderId/customer-contact", driverAuth, controller.getCustom
  *       200:
  *         description: Order accepted successfully
  */
-router.put("/accept-order/:orderId", driverAuth, controller.acceptOrder);
+router.put("/accept-order/:orderId", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.acceptOrder);
 
 /**
  * @swagger
@@ -241,7 +243,7 @@ router.put("/accept-order/:orderId", driverAuth, controller.acceptOrder);
  *       200:
  *         description: Order rejected successfully
  */
-router.put("/reject-order/:orderId", driverAuth, controller.rejectOrder);
+router.put("/reject-order/:orderId", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.rejectOrder);
 
 /**
  * @swagger
@@ -261,7 +263,7 @@ router.put("/reject-order/:orderId", driverAuth, controller.rejectOrder);
  *       200:
  *         description: Order picked successfully
  */
-router.put("/pick-order/:orderId", driverAuth, controller.pickOrder);
+router.put("/pick-order/:orderId", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.pickOrder);
 
 /**
  * @swagger
@@ -281,7 +283,7 @@ router.put("/pick-order/:orderId", driverAuth, controller.pickOrder);
  *       200:
  *         description: Order completed successfully
  */
-router.put("/complete-order/:orderId", driverAuth, upload.single("proof"), controller.completeOrder);
+router.put("/complete-order/:orderId", driverAuth, attachDeliveryAgent, requireApprovedDriver, upload.single("proof"), controller.completeOrder);
 
 /**
  * @swagger
@@ -295,7 +297,7 @@ router.put("/complete-order/:orderId", driverAuth, upload.single("proof"), contr
  *       200:
  *         description: Notifications fetched
  */
-router.get("/notifications", driverAuth, controller.getNotifications);
+router.get("/notifications", driverAuth, attachDeliveryAgent, controller.getNotifications);
 
 /**
  * @swagger
@@ -315,7 +317,7 @@ router.get("/notifications", driverAuth, controller.getNotifications);
  *       200:
  *         description: Notification marked as read
  */
-router.patch("/notifications/:notificationId/read", driverAuth, controller.markNotificationRead);
+router.patch("/notifications/:notificationId/read", driverAuth, attachDeliveryAgent, controller.markNotificationRead);
 
 /**
  * @swagger
@@ -329,7 +331,7 @@ router.patch("/notifications/:notificationId/read", driverAuth, controller.markN
  *       200:
  *         description: Notifications marked as read
  */
-router.patch("/notifications/read-all", driverAuth, controller.markAllNotificationsRead);
+router.patch("/notifications/read-all", driverAuth, attachDeliveryAgent, controller.markAllNotificationsRead);
 
 /**
  * @swagger
@@ -343,6 +345,6 @@ router.patch("/notifications/read-all", driverAuth, controller.markAllNotificati
  *       200:
  *         description: Driver dashboard data
  */
-router.get("/dashboard", driverAuth, controller.getDashboard);
+router.get("/dashboard", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.getDashboard);
 
 module.exports = router;
