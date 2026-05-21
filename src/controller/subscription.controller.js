@@ -325,3 +325,75 @@ exports.getUpcomingSubscriptionDeliveries = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
+/** Calendar-friendly range query: all deliveries for user's subscriptions within [from, to] inclusive. */
+exports.getSubscriptionDeliveriesCalendarRange = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { from, to } = req.query;
+
+    if (!from || !to) {
+      return res
+        .status(400)
+        .json({ message: "Query params 'from' and 'to' are required (ISO date strings)" });
+    }
+
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+      return res.status(400).json({ message: "Invalid from or to date" });
+    }
+    if (toDate.getTime() < fromDate.getTime()) {
+      return res.status(400).json({ message: "to must be on or after from" });
+    }
+
+    const maxSpanMs = 400 * DAY_MS;
+    if (toDate.getTime() - fromDate.getTime() > maxSpanMs) {
+      return res.status(400).json({ message: "Date range may not exceed 400 days" });
+    }
+
+    const rangeStart = new Date(fromDate);
+    rangeStart.setHours(0, 0, 0, 0);
+    const rangeEnd = new Date(toDate);
+    rangeEnd.setHours(23, 59, 59, 999);
+
+    const subscriptions = await UserSubscription.find({ userId }).select("_id");
+    const ids = subscriptions.map((s) => s._id);
+    if (ids.length === 0) {
+      return res.status(200).json({
+        message: "Subscription deliveries fetched successfully",
+        data: []
+      });
+    }
+
+    const deliveries = await SubscriptionDelivery.find({
+      userSubscriptionId: { $in: ids },
+      deliveryDate: { $gte: rangeStart, $lte: rangeEnd }
+    })
+      .populate({
+        path: "userSubscriptionId",
+        select: "title partnerId menuItemId",
+        populate: [
+          { path: "partnerId", select: "kitchenName address" },
+          { path: "menuItemId", select: "name image price" }
+        ]
+      })
+      .populate({
+        path: "linkedOrderId",
+        select: "status timeline orderType subscriptionDeliveryId"
+      })
+      .populate({
+        path: "deliveryBoyId",
+        select: "fullName mobileNumber profileImage"
+      })
+      .sort({ deliveryDate: 1 });
+
+    return res.status(200).json({
+      message: "Subscription deliveries fetched successfully",
+      data: deliveries
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};

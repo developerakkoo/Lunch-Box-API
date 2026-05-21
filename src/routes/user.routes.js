@@ -519,6 +519,37 @@ router.get("/subscriptions/history", auth, subscriptionController.getSubscriptio
 
 /**
  * @swagger
+ * /api/user/subscriptions/deliveries:
+ *   get:
+ *     summary: Subscription deliveries for calendar range (past and future statuses)
+ *     tags: [User]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: from
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: to
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date
+ *     responses:
+ *       200:
+ *         description: Deliveries in range fetched
+ */
+router.get(
+  "/subscriptions/deliveries",
+  auth,
+  subscriptionController.getSubscriptionDeliveriesCalendarRange
+);
+
+/**
+ * @swagger
  * /api/user/subscriptions/upcoming-deliveries:
  *   get:
  *     summary: Get upcoming subscription deliveries

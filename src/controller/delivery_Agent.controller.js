@@ -19,6 +19,10 @@ const {
   setDriverAssignment,
   setDriverPresence
 } = require("../utils/orderEvents");
+const {
+  markSubscriptionDeliveryDeliveredFromOrder,
+  markSubscriptionDeliveryOutForDeliveryFromOrder
+} = require("../utils/subscriptionOrderBridge");
 
 const getDriverIdFromReq = (req) => req?.driver?.id;
 const ACTIVE_DELIVERY_STATUSES = ["READY", "OUT_FOR_DELIVERY"];
@@ -489,6 +493,8 @@ exports.pickOrder = async (req, res) => {
     order.timeline.pickedAt = new Date();
     await order.save();
 
+    await markSubscriptionDeliveryOutForDeliveryFromOrder(order);
+
     global.io?.to(`user_${order.user}`).emit("delivery_started", order);
     emitOrderPicked(order);
     await removeDriverReadyOrder(order._id);
@@ -543,6 +549,8 @@ exports.completeOrder = async (req, res) => {
     }
 
     await order.save();
+
+    await markSubscriptionDeliveryDeliveredFromOrder(order);
 
     const deliveryFee = 40;
     agent.earnings.today = (agent.earnings.today || 0) + deliveryFee;

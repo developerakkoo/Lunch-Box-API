@@ -3,6 +3,8 @@ const User = require("../../module/user.model");
 const Partner = require("../../module/partner.model");
 const UserSubscription = require("../../module/userSubscription.model");
 const SubscriptionDelivery = require("../../module/subscriptionDelivery.model");
+const Order = require("../../module/order.model");
+const DeliveryAgent = require("../../module/Delivery_Agent");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -110,12 +112,95 @@ exports.getSubscriptionById = async (req, res) => {
     }
 
     const deliveries = await SubscriptionDelivery.find({ userSubscriptionId: id })
+      .populate("linkedOrderId", "_id status deliveryAgent timeline createdAt orderType")
+      .populate("deliveryBoyId", "fullName mobileNumber email")
       .sort({ deliveryDate: 1 })
-      .limit(30);
+      .limit(90);
 
     return res.status(200).json({
       message: "Subscription details fetched",
       data: { subscription, deliveries }
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.updateSubscriptionDelivery = async (req, res) => {
+  try {
+    const { subscriptionId, deliveryId } = req.params;
+    const { deliveryBoyId, status, skipReason, unlinkOrder } = req.body || {};
+
+    if (!isValidObjectId(subscriptionId) || !isValidObjectId(deliveryId)) {
+      return res.status(400).json({ message: "Invalid subscription or delivery id" });
+    }
+
+    const subscriptionExists = await UserSubscription.exists({ _id: subscriptionId });
+    if (!subscriptionExists) {
+      return res.status(404).json({ message: "Subscription not found" });
+    }
+
+    const delivery = await SubscriptionDelivery.findOne({
+      _id: deliveryId,
+      userSubscriptionId: subscriptionId
+    });
+    if (!delivery) {
+      return res.status(404).json({ message: "Subscription delivery not found" });
+    }
+
+    const patchDriver = Object.prototype.hasOwnProperty.call(req.body || {}, "deliveryBoyId");
+    const willSkip = status === "SKIPPED";
+    const willUnlink = unlinkOrder === true;
+
+    if (!patchDriver && !willSkip && !willUnlink) {
+      return res.status(400).json({
+        message: "Provide deliveryBoyId, status: SKIPPED, and/or unlinkOrder: true"
+      });
+    }
+
+    if (patchDriver) {
+      if (deliveryBoyId === null || deliveryBoyId === "") {
+        delivery.deliveryBoyId = null;
+      } else {
+        if (!isValidObjectId(deliveryBoyId)) {
+          return res.status(400).json({ message: "Invalid deliveryBoyId" });
+        }
+        const agent = await DeliveryAgent.findById(deliveryBoyId);
+        if (!agent) {
+          return res.status(400).json({ message: "Delivery agent not found" });
+        }
+        delivery.deliveryBoyId = agent._id;
+      }
+
+      if (delivery.linkedOrderId) {
+        await Order.findByIdAndUpdate(delivery.linkedOrderId, {
+          deliveryAgent: delivery.deliveryBoyId
+        }).exec();
+      }
+    }
+
+    if (willSkip) {
+      delivery.status = "SKIPPED";
+      delivery.timeline = delivery.timeline || {};
+      delivery.timeline.cancelledAt = new Date();
+      if (skipReason) {
+        delivery.rejectionReason = skipReason;
+      }
+    }
+
+    if (willUnlink) {
+      delivery.linkedOrderId = null;
+    }
+
+    await delivery.save();
+
+    const populated = await SubscriptionDelivery.findById(delivery._id)
+      .populate("linkedOrderId", "_id status deliveryAgent timeline orderType")
+      .populate("deliveryBoyId", "fullName mobileNumber email");
+
+    return res.status(200).json({
+      message: "Subscription delivery updated",
+      data: populated
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });

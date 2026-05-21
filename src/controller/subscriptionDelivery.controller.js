@@ -1,7 +1,11 @@
 const mongoose = require("mongoose");
 const SubscriptionDelivery = require("../module/subscriptionDelivery.model");
 const UserSubscription = require("../module/userSubscription.model");
+const logger = require("../utils/logger");
 const { getManagedHotelIds, resolveAccessibleHotel } = require("../utils/partnerAccess");
+const {
+  materializeOrderFromSubscriptionDelivery,
+} = require("../utils/subscriptionOrderBridge");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -23,7 +27,10 @@ exports.partnerListDeliveries = async (req, res) => {
     const pageNumber = Math.max(Number(page) || 1, 1);
     const limitNumber = Math.max(Number(limit) || 20, 1);
 
-    const subs = await UserSubscription.find({ partnerId: selectedHotel._id }).select("_id");
+    const subs = await UserSubscription.find({
+      partnerId: selectedHotel._id,
+      status: "ACTIVE",
+    }).select("_id");
     const subIds = subs.map((s) => s._id);
 
     const statusFilter =
@@ -80,7 +87,7 @@ exports.partnerDeliveryAction = async (req, res) => {
       return res.status(400).json({ message: "Invalid action" });
     }
 
-    const delivery = await SubscriptionDelivery.findById(id).populate("userSubscriptionId");
+    let delivery = await SubscriptionDelivery.findById(id).populate("userSubscriptionId");
     if (!delivery) {
       return res.status(404).json({ message: "Delivery not found" });
     }
@@ -103,6 +110,26 @@ exports.partnerDeliveryAction = async (req, res) => {
     }
 
     await delivery.save();
+
+    if (nextStatus === "READY") {
+      try {
+        await materializeOrderFromSubscriptionDelivery(delivery._id);
+      } catch (bridgeErr) {
+        logger.error("Subscription → Order bridge failed", {
+          deliveryId: String(delivery._id),
+          message: bridgeErr?.message
+        });
+      }
+      const reloaded = await SubscriptionDelivery.findById(delivery._id)
+        .populate("userSubscriptionId")
+        .populate({
+          path: "linkedOrderId",
+          select: "status timeline orderType subscriptionDeliveryId deliveryAgent createdAt user",
+        });
+      if (reloaded) {
+        delivery = reloaded;
+      }
+    }
 
     const io = global.io;
     if (io && partnerId) {
