@@ -15,7 +15,11 @@ const app = express();
 /* -------------------------------------------------------------------------- */
 
 app.use(cors());
-app.use(express.json());
+// Partners sometimes send menu images as JSON/base64 payloads from the admin app.
+// Keep the global limit high enough for those requests while still preventing
+// excessively large bodies from being accepted by default.
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 app.use(morgan("dev"));
 app.use(helmet());
 app.use(compression());
@@ -123,6 +127,12 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
   console.error(err);
+
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({
+      message: "Request body is too large. Please upload a smaller image or send it as multipart/form-data."
+    });
+  }
 
   res.status(err.status || 500).json({
     message: err.message || "Internal Server Error"
