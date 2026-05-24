@@ -14,6 +14,10 @@ const {
   publishOrderEvent,
   clearDriverAssignment
 } = require("../utils/orderEvents");
+const {
+  normalizePaymentMethod,
+  resolveOrderAddress
+} = require("../utils/orderRequest");
 const mongoose = require("mongoose");
 
 const CUSTOMER_STATUS = {
@@ -92,18 +96,14 @@ exports.createOrder = async (req, res) => {
   try {
     logger.info("HTTP createOrder request received", { userId: getActorIdFromReq(req) });
     const userId = getActorIdFromReq(req);
-    const { addressId, paymentMethod = "COD" } = req.body;
+    const paymentMethod = normalizePaymentMethod(req.body?.paymentMethod);
     const actorRole = await getActorRole(userId);
 
     if (actorRole !== "USER") {
       return apiError(res, 403, "ROLE_NOT_ALLOWED", "Only users can create orders");
     }
 
-    if (!isValidObjectId(addressId)) {
-      return apiError(res, 400, "INVALID_ADDRESS_ID", "addressId must be a valid id");
-    }
-
-    if (!["COD", "ONLINE", "WALLET"].includes(paymentMethod)) {
+    if (!paymentMethod) {
       return apiError(res, 400, "INVALID_PAYMENT_METHOD", "paymentMethod must be COD, ONLINE or WALLET");
     }
 
@@ -114,10 +114,22 @@ exports.createOrder = async (req, res) => {
     }
 
     const user = await User.findById(userId);
-    const address = user?.addresses?.id(addressId);
+    const { address, addressId, source } = resolveOrderAddress(user, req.body || {});
 
     if (!address) {
-      return apiError(res, 400, "ADDRESS_NOT_FOUND", "Invalid address");
+      return apiError(
+        res,
+        400,
+        "ADDRESS_NOT_FOUND",
+        "Select a valid delivery address before placing the order"
+      );
+    }
+
+    if (source === "fallback") {
+      logger.warn("HTTP createOrder using fallback address", {
+        userId,
+        orderAddressId: addressId
+      });
     }
 
     const orderData = {

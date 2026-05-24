@@ -13,6 +13,10 @@ const { createPaymentIntent, retrievePaymentIntent } = require("../utils/stripe"
 const { getManagedHotelIds } = require("../utils/partnerAccess");
 const logger = require("../utils/logger");
 const {
+  normalizePaymentMethod,
+  resolveOrderAddress
+} = require("../utils/orderRequest");
+const {
   clearDriverAssignment,
   emitOrderStatusUpdate,
   publishOrderEvent,
@@ -227,7 +231,7 @@ const orderSocketHandler = () => {
         const { actor, error } = await requireActor(socket, ["USER"]);
         if (error) return callback && callback(error);
 
-        const { addressId, paymentMethod = "COD" } = payload || {};
+        const paymentMethod = normalizePaymentMethod(payload?.paymentMethod);
         const userId = actor.id;
 
         const cart = await Cart.findOne({ userId });
@@ -237,14 +241,21 @@ const orderSocketHandler = () => {
         }
 
         const user = await User.findById(userId);
-        const address = user?.addresses?.id(addressId);
+        const { address, addressId, source } = resolveOrderAddress(user, payload || {});
         if (!address) {
-          logger.warn("create_order rejected: invalid address", { userId, addressId });
-          return callback && callback({ status: "error", message: "Invalid address" });
+          logger.warn("create_order rejected: invalid address", { userId });
+          return callback && callback({ status: "error", message: "Select a valid delivery address before placing the order" });
         }
 
-        if (!["COD", "ONLINE", "WALLET"].includes(paymentMethod)) {
+        if (!paymentMethod) {
           return callback && callback({ status: "error", message: "Invalid payment method" });
+        }
+
+        if (source === "fallback") {
+          logger.warn("create_order using fallback address", {
+            userId,
+            orderAddressId: addressId
+          });
         }
 
         if (paymentMethod === "WALLET") {
