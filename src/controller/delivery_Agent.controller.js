@@ -30,6 +30,26 @@ const {
 const getDriverIdFromReq = (req) => req?.driver?.id;
 const ACTIVE_DELIVERY_STATUSES = ["READY", "OUT_FOR_DELIVERY"];
 
+const getUploadedProofFile = (req) => {
+  if (req.file) return req.file;
+
+  const files = req.files;
+  if (!files) return null;
+
+  if (Array.isArray(files)) {
+    return files.find(Boolean) || null;
+  }
+
+  const fileFields = ["proof", "deliveryProof", "delivery_proof", "image", "photo"];
+  for (const field of fileFields) {
+    const file = files[field];
+    if (Array.isArray(file) && file[0]) return file[0];
+    if (file && !Array.isArray(file)) return file;
+  }
+
+  return null;
+};
+
 const syncAgentAvailability = async (agent) => {
   if (!agent) return null;
 
@@ -563,9 +583,12 @@ exports.completeOrder = async (req, res) => {
     }
 
     const { getUploadedFileName } = require("../utils/media");
-    const proofFile = getUploadedFileName(req.file);
+    const proofFile = getUploadedFileName(getUploadedProofFile(req));
     if (!proofFile) {
-      return res.status(400).json({ message: "Delivery proof photo is required" });
+      return res.status(400).json({
+        message: "Delivery proof photo is required",
+        details: "Send an image using one of these form fields: proof, deliveryProof, delivery_proof, image, photo",
+      });
     }
 
     await transitionOrder({

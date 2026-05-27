@@ -285,7 +285,20 @@ router.put("/pick-order/:orderId", driverAuth, attachDeliveryAgent, requireAppro
  *       200:
  *         description: Order completed successfully
  */
-router.put("/complete-order/:orderId", driverAuth, attachDeliveryAgent, requireApprovedDriver, upload.single("proof"), controller.completeOrder);
+router.put(
+  "/complete-order/:orderId",
+  driverAuth,
+  attachDeliveryAgent,
+  requireApprovedDriver,
+  upload.fields([
+    { name: "proof", maxCount: 1 },
+    { name: "deliveryProof", maxCount: 1 },
+    { name: "delivery_proof", maxCount: 1 },
+    { name: "image", maxCount: 1 },
+    { name: "photo", maxCount: 1 },
+  ]),
+  controller.completeOrder
+);
 
 /**
  * @swagger
