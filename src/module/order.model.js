@@ -37,6 +37,11 @@ const orderSchema = new mongoose.Schema(
       default: null,
     },
 
+    idempotencyKey: {
+      type: String,
+      default: null,
+    },
+
     /*
     |--------------------------------------------------------------------------
     | ORDER ITEMS SNAPSHOT
@@ -168,6 +173,11 @@ const orderSchema = new mongoose.Schema(
         type: mongoose.Schema.Types.ObjectId,
         ref: "DeliveryAgent",
       },
+      location: {
+        latitude: Number,
+        longitude: Number,
+        capturedAt: Date,
+      },
     },
 
 
@@ -184,6 +194,17 @@ const orderSchema = new mongoose.Schema(
       },
       reason: String,
     },
+
+    statusAudit: [
+      {
+        fromStatus: String,
+        toStatus: String,
+        actorRole: String,
+        actorId: mongoose.Schema.Types.ObjectId,
+        reason: String,
+        at: Date,
+      },
+    ],
 
 
 
@@ -223,5 +244,12 @@ const orderSchema = new mongoose.Schema(
 );
 
 orderSchema.index({ partner: 1, status: 1, createdAt: -1 });
+orderSchema.index({ user: 1, createdAt: -1 });
+orderSchema.index({ deliveryAgent: 1, status: 1 });
+orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index(
+  { user: 1, idempotencyKey: 1 },
+  { unique: true, partialFilterExpression: { idempotencyKey: { $type: "string" } } }
+);
 
 module.exports = mongoose.model("Order", orderSchema);

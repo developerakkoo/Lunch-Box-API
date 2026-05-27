@@ -15,10 +15,13 @@ const {
   acquireOrderLock,
   clearDriverAssignment,
   publishOrderEvent,
+  releaseOrderLock,
   removeDriverReadyOrder,
   setDriverAssignment,
   setDriverPresence
 } = require("../utils/orderEvents");
+const { normalizeStoredAssetPath } = require("../utils/media");
+const { transitionOrder } = require("../services/orderTransition.service");
 const {
   markSubscriptionDeliveryDeliveredFromOrder,
   markSubscriptionDeliveryOutForDeliveryFromOrder
@@ -352,6 +355,32 @@ exports.getOrdersByDeliveryStatus = async (req, res) => {
   }
 };
 
+exports.getOrderDetails = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const agent = req.deliveryAgent;
+
+    const order = await Order.findById(orderId)
+      .populate("partner", "kitchenName address latitude longitude phone")
+      .populate("user", "fullName mobileNumber");
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const assignedToMe = order.deliveryAgent && String(order.deliveryAgent) === String(agent._id);
+    const availablePoolOrder = order.status === "READY" && !order.deliveryAgent;
+    if (!assignedToMe && !availablePoolOrder) {
+      return res.status(403).json({ message: "Order is not available to this delivery agent" });
+    }
+
+    return res.status(200).json({
+      message: "Order fetched successfully",
+      data: order,
+    });
+  } catch (error) {
+    logger.error("Driver order detail fetch failed", { message: error.message });
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 exports.acceptOrder = async (req, res) => {
   try {
     logger.info("Driver accept order request", { orderId: req.params.orderId, driverId: getDriverIdFromReq(req) });
@@ -377,41 +406,45 @@ exports.acceptOrder = async (req, res) => {
       return res.status(409).json({ message: "Order is being processed by another driver" });
     }
 
-    order.deliveryAgent = agent._id;
-    await order.save();
+    try {
+      order.deliveryAgent = agent._id;
+      await order.save();
 
-    agent.currentOrder = order._id;
-    agent.isAvailable = false;
-    await agent.save();
-    await setDriverAssignment(agent._id, order._id);
-    await removeDriverReadyOrder(order._id);
+      agent.currentOrder = order._id;
+      agent.isAvailable = false;
+      await agent.save();
+      await setDriverAssignment(agent._id, order._id);
+      await removeDriverReadyOrder(order._id);
 
-    await notifyDeliveryAgent({
-      deliveryAgentId: agent._id,
-      type: "ORDER_ACCEPTED",
-      title: "Order Accepted",
-      message: `You accepted order #${order._id.toString().slice(-6)}`,
-      data: { orderId: order._id }
-    });
+      await notifyDeliveryAgent({
+        deliveryAgentId: agent._id,
+        type: "ORDER_ACCEPTED",
+        title: "Order Accepted",
+        message: `You accepted order #${order._id.toString().slice(-6)}`,
+        data: { orderId: order._id }
+      });
 
-    global.io?.to(`user_${order.user}`).emit("delivery_assigned", {
-      orderId: order._id,
-      deliveryAgentId: agent._id
-    });
-    global.io?.to(`kitchen_${order.partner}`).emit("delivery_assigned", {
-      orderId: order._id,
-      deliveryAgentId: agent._id
-    });
-    await publishOrderEvent({
-      type: "ORDER_ASSIGNED_TO_DRIVER",
-      order,
-      driverId: agent._id
-    });
+      global.io?.to(`user_${order.user}`).emit("delivery_assigned", {
+        orderId: order._id,
+        deliveryAgentId: agent._id
+      });
+      global.io?.to(`kitchen_${order.partner}`).emit("delivery_assigned", {
+        orderId: order._id,
+        deliveryAgentId: agent._id
+      });
+      await publishOrderEvent({
+        type: "ORDER_ASSIGNED_TO_DRIVER",
+        order,
+        driverId: agent._id
+      });
 
-    return res.status(200).json({
-      message: "Order accepted successfully",
-      data: order
-    });
+      return res.status(200).json({
+        message: "Order accepted successfully",
+        data: order
+      });
+    } finally {
+      await releaseOrderLock(lock);
+    }
   } catch (error) {
     logger.error("Driver accept order failed", { message: error.message });
     return res.status(500).json({ message: error.message });
@@ -434,7 +467,7 @@ exports.rejectOrder = async (req, res) => {
     }
 
     order.deliveryAgent = null;
-    order.status = "ACCEPTED";
+    order.status = "READY";
     order.timeline = order.timeline || {};
     order.timeline.pickedAt = null;
     await order.save();
@@ -463,6 +496,8 @@ exports.rejectOrder = async (req, res) => {
       reason
     });
 
+    await require("../utils/deliveryAssignment")(order);
+
     return res.status(200).json({
       message: "Order rejected successfully",
       data: order
@@ -488,21 +523,19 @@ exports.pickOrder = async (req, res) => {
       return res.status(400).json({ message: "Only ready orders can be picked" });
     }
 
-    order.status = "OUT_FOR_DELIVERY";
-    order.timeline = order.timeline || {};
-    order.timeline.pickedAt = new Date();
-    await order.save();
+    await transitionOrder({
+      order,
+      actorRole: "DELIVERY_AGENT",
+      actorId: agent._id,
+      toStatus: "OUT_FOR_DELIVERY",
+      eventType: "ORDER_PICKED"
+    });
 
     await markSubscriptionDeliveryOutForDeliveryFromOrder(order);
 
     global.io?.to(`user_${order.user}`).emit("delivery_started", order);
     emitOrderPicked(order);
     await removeDriverReadyOrder(order._id);
-    await publishOrderEvent({
-      type: "ORDER_PICKED",
-      order,
-      driverId: agent._id
-    });
 
     return res.status(200).json({
       message: "Order picked successfully",
@@ -535,20 +568,31 @@ exports.completeOrder = async (req, res) => {
       return res.status(400).json({ message: "Delivery proof photo is required" });
     }
 
-    order.status = "DELIVERED";
-    order.timeline = order.timeline || {};
-    order.timeline.deliveredAt = new Date();
-    order.deliveryProof = {
-      imageUrl: proofFile,
-      uploadedAt: new Date(),
-      uploadedBy: agent._id,
-    };
+    await transitionOrder({
+      order,
+      actorRole: "DELIVERY_AGENT",
+      actorId: agent._id,
+      toStatus: "DELIVERED",
+      eventType: "ORDER_DELIVERED",
+      beforeSave: async (doc) => {
+        doc.deliveryProof = {
+          imageUrl: normalizeStoredAssetPath(proofFile),
+          uploadedAt: new Date(),
+          uploadedBy: agent._id,
+          location: agent.liveLocation
+            ? {
+                latitude: agent.liveLocation.latitude,
+                longitude: agent.liveLocation.longitude,
+                capturedAt: agent.liveLocation.updatedAt || new Date()
+              }
+            : undefined
+        };
 
-    if (order.payment?.method === "COD") {
-      order.payment.paymentStatus = "PAID";
-    }
-
-    await order.save();
+        if (doc.payment?.method === "COD") {
+          doc.payment.paymentStatus = "PAID";
+        }
+      }
+    });
 
     await markSubscriptionDeliveryDeliveredFromOrder(order);
 
@@ -569,11 +613,6 @@ exports.completeOrder = async (req, res) => {
     });
 
     emitOrderDelivered(order);
-    await publishOrderEvent({
-      type: "ORDER_DELIVERED",
-      order,
-      driverId: agent._id
-    });
 
     return res.status(200).json({
       message: "Order completed successfully",

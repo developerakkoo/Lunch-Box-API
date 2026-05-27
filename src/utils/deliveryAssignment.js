@@ -1,4 +1,5 @@
 const DeliveryAgent = require("../module/Delivery_Agent");
+const Order = require("../module/order.model");
 const { notifyDeliveryAgent } = require("./deliveryNotification");
 const logger = require("./logger");
 const {
@@ -9,24 +10,48 @@ const {
 
 async function assignDeliveryBoy(order) {
   logger.info("Attempting delivery assignment", { orderId: order?._id, partnerId: order?.partner });
-  const availableBoy = await DeliveryAgent.findOne({
-    isOnline: true,
-    isAvailable: true,
-    status: "APPROVED",
-    deletedAt: null,
-  });
+  if (!order || order.status !== "READY") {
+    logger.warn("Skipping assignment for non-ready order", { orderId: order?._id, status: order?.status });
+    return null;
+  }
+
+  const availableBoy = await DeliveryAgent.findOneAndUpdate(
+    {
+      isOnline: true,
+      isAvailable: true,
+      currentOrder: null,
+      status: "APPROVED",
+      deletedAt: null,
+    },
+    {
+      $set: {
+        currentOrder: order._id,
+        isAvailable: false,
+      },
+    },
+    { new: true, sort: { updatedAt: 1 } }
+  );
 
   if (!availableBoy) {
     logger.warn("No available driver found for assignment", { orderId: order?._id });
     return null;
   }
 
-  order.deliveryAgent = availableBoy._id;
-  await order.save();
+  const assignedOrder = await Order.findOneAndUpdate(
+    { _id: order._id, status: "READY", deliveryAgent: null },
+    { $set: { deliveryAgent: availableBoy._id } },
+    { new: true }
+  );
 
-  availableBoy.currentOrder = order._id;
-  availableBoy.isAvailable = false;
-  await availableBoy.save();
+  if (!assignedOrder) {
+    availableBoy.currentOrder = null;
+    availableBoy.isAvailable = true;
+    await availableBoy.save();
+    logger.warn("Order assignment lost race", { orderId: order._id, driverId: availableBoy._id });
+    return null;
+  }
+
+  order = assignedOrder;
   await setDriverAssignment(availableBoy._id, order._id);
   await removeDriverReadyOrder(order._id);
   logger.info("Driver assigned", { orderId: order._id, driverId: availableBoy._id });

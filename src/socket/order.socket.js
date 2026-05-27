@@ -900,6 +900,11 @@ const orderSocketHandler = () => {
 
     socket.on("mark_delivered", async (payload, callback) => {
       try {
+        return callback && callback({
+          status: "error",
+          code: "LEGACY_DRIVER_SOCKET_DISABLED",
+          message: "Use /api/delivery/complete-order/:orderId with delivery proof"
+        });
         logger.info("mark_delivered received", { socketId: socket.id, orderId: payload?.orderId });
         const { actor, error } = await requireActor(socket, ["DELIVERY_AGENT"]);
         if (error) return callback && callback(error);

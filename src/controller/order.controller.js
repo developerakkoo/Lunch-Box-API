@@ -19,6 +19,8 @@ const {
   resolveOrderAddress
 } = require("../utils/orderRequest");
 const mongoose = require("mongoose");
+const DELIVERY_CHARGE = 40;
+const TAX_RATE = 0.05;
 
 const CUSTOMER_STATUS = {
   PLACED: "ORDER_RECEIVED",
@@ -97,6 +99,7 @@ exports.createOrder = async (req, res) => {
     logger.info("HTTP createOrder request received", { userId: getActorIdFromReq(req) });
     const userId = getActorIdFromReq(req);
     const paymentMethod = normalizePaymentMethod(req.body?.paymentMethod);
+    const idempotencyKey = req.get?.("Idempotency-Key") || req.body?.idempotencyKey || null;
     const actorRole = await getActorRole(userId);
 
     if (actorRole !== "USER") {
@@ -105,6 +108,13 @@ exports.createOrder = async (req, res) => {
 
     if (!paymentMethod) {
       return apiError(res, 400, "INVALID_PAYMENT_METHOD", "paymentMethod must be COD, ONLINE or WALLET");
+    }
+
+    if (idempotencyKey) {
+      const existing = await Order.findOne({ user: userId, idempotencyKey });
+      if (existing) {
+        return res.status(200).json({ message: "Order already created", order: existing, idempotent: true });
+      }
     }
 
     const cart = await Cart.findOne({ userId });
@@ -132,9 +142,15 @@ exports.createOrder = async (req, res) => {
       });
     }
 
+    const itemTotal = cart.totalAmount;
+    const tax = Math.round(itemTotal * TAX_RATE);
+    const deliveryCharge = itemTotal > 0 ? DELIVERY_CHARGE : 0;
+    const totalAmount = itemTotal + tax + deliveryCharge;
+
     const orderData = {
       user: userId,
       partner: cart.kitchenId,
+      idempotencyKey,
       items: cart.items.map((item) => ({
         menuItem: item.productId,
         name: item.name,
@@ -146,12 +162,12 @@ exports.createOrder = async (req, res) => {
         }))
       })),
       priceDetails: {
-        itemTotal: cart.totalAmount,
-        tax: 0,
-        deliveryCharge: 0,
+        itemTotal,
+        tax,
+        deliveryCharge,
         platformFee: 0,
         discount: 0,
-        totalAmount: cart.totalAmount
+        totalAmount
       },
       deliveryAddress: {
         fullAddress: address.fullAddress,
@@ -172,11 +188,22 @@ exports.createOrder = async (req, res) => {
     if (paymentMethod === "WALLET") {
       const userDoc = await User.findById(userId);
       if (!userDoc) return apiError(res, 404, "USER_NOT_FOUND", "User not found");
-      if ((userDoc.walletBalance || 0) < cart.totalAmount) {
+      if ((userDoc.walletBalance || 0) < totalAmount) {
         return apiError(res, 400, "INSUFFICIENT_WALLET_BALANCE", "Insufficient wallet balance");
       }
-      userDoc.walletBalance = (userDoc.walletBalance || 0) - cart.totalAmount;
+      const balanceBefore = userDoc.walletBalance || 0;
+      userDoc.walletBalance = balanceBefore - totalAmount;
       await userDoc.save();
+      await createWalletLedgerEntry({
+        userId,
+        type: "DEBIT",
+        source: "ORDER_PAYMENT",
+        amount: totalAmount,
+        balanceBefore,
+        balanceAfter: userDoc.walletBalance,
+        referenceType: "Order",
+        notes: "Order payment"
+      });
     }
 
     const order = await Order.create(orderData);
@@ -187,7 +214,7 @@ exports.createOrder = async (req, res) => {
     if (paymentMethod === "ONLINE") {
       try {
         // amount in paise
-        razorpayOrder = await createRazorOrder(Math.round(cart.totalAmount * 100));
+        razorpayOrder = await createRazorOrder(Math.round(totalAmount * 100));
         if (razorpayOrder?.id) {
           order.payment.gatewayOrderId = razorpayOrder.id;
           await order.save();
@@ -356,6 +383,12 @@ exports.kitchenAction = async (req, res) => {
 
 exports.deliveryAction = async (req, res) => {
   try {
+    return apiError(
+      res,
+      410,
+      "LEGACY_DRIVER_ROUTE_DISABLED",
+      "Use /api/delivery/pick-order/:orderId for driver pickup"
+    );
     logger.info("HTTP deliveryAction request received", { orderId: req.params.orderId, actorId: getActorIdFromReq(req) });
     const actorId = getActorIdFromReq(req);
     const actorRole = await getActorRole(actorId);
@@ -400,6 +433,12 @@ exports.deliveryAction = async (req, res) => {
 
 exports.markDelivered = async (req, res) => {
   try {
+    return apiError(
+      res,
+      410,
+      "LEGACY_DRIVER_ROUTE_DISABLED",
+      "Use /api/delivery/complete-order/:orderId with delivery proof"
+    );
     logger.info("HTTP markDelivered request received", { orderId: req.params.orderId, actorId: getActorIdFromReq(req) });
     const actorId = getActorIdFromReq(req);
     const actorRole = await getActorRole(actorId);

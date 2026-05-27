@@ -6,6 +6,26 @@ const logCartWarning = (message, details = {}) => {
   console.warn(`[cart] ${message}`, details);
 };
 
+const DELIVERY_CHARGE = 40;
+const TAX_RATE = 0.05;
+
+const buildQuote = (cart, discount = 0) => {
+  const itemTotal = cart.totalAmount || 0;
+  const tax = Math.round(itemTotal * TAX_RATE);
+  const deliveryCharge = itemTotal > 0 ? DELIVERY_CHARGE : 0;
+  const totalAmount = Math.max(itemTotal + deliveryCharge + tax - discount, 0);
+  return {
+    itemTotal,
+    cartAmount: itemTotal,
+    discount,
+    tax,
+    deliveryCharge,
+    platformFee: 0,
+    finalAmount: totalAmount,
+    totalAmount,
+  };
+};
+
 exports.addToCart = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -96,6 +116,61 @@ exports.addToCart = async (req, res) => {
   }
 };
 
+exports.syncCart = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+
+    if (!items.length) {
+      await Cart.findOneAndUpdate(
+        { userId },
+        { $set: { kitchenId: null, items: [], totalAmount: 0 } },
+        { upsert: true, new: true }
+      );
+      return res.json({ message: "Cart synced", cart: { items: [], totalAmount: 0 } });
+    }
+
+    const normalized = [];
+    for (const item of items) {
+      const menuItemId = item?.menuItemId;
+      const quantity = Number(item?.quantity);
+      if (!menuItemId || !Number.isFinite(quantity) || quantity <= 0) {
+        return res.status(400).json({ message: "Each cart item needs menuItemId and positive quantity" });
+      }
+      const menuItem = await MenuItem.findById(menuItemId);
+      if (!menuItem) {
+        return res.status(404).json({ message: "Menu item not found" });
+      }
+      normalized.push({ menuItem, quantity });
+    }
+
+    const kitchenId = normalized[0].menuItem.partner;
+    if (normalized.some((item) => item.menuItem.partner.toString() !== kitchenId.toString())) {
+      return res.status(400).json({ message: "You can only order from one kitchen at a time" });
+    }
+
+    const cartItems = normalized.map(({ menuItem, quantity }) => ({
+      productId: menuItem._id,
+      kitchenId: menuItem.partner,
+      name: menuItem.name,
+      price: menuItem.price,
+      quantity,
+      totalItemPrice: menuItem.price * quantity,
+    }));
+    const totalAmount = cartItems.reduce((sum, item) => sum + item.totalItemPrice, 0);
+    const cart = await Cart.findOneAndUpdate(
+      { userId },
+      { $set: { kitchenId, items: cartItems, totalAmount } },
+      { upsert: true, new: true }
+    );
+
+    return res.json({ message: "Cart synced", cart, quote: buildQuote(cart) });
+  } catch (error) {
+    console.error("[cart.syncCart] Unexpected error", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 exports.checkout = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -157,17 +232,7 @@ exports.checkout = async (req, res) => {
       }
     }
 
-    const deliveryCharge = 30;
-    const tax = cart.totalAmount * 0.05;
-    const finalAmount = cart.totalAmount + deliveryCharge + tax - discount;
-
-    res.json({
-      cartAmount: cart.totalAmount,
-      discount,
-      tax,
-      deliveryCharge,
-      finalAmount
-    });
+    res.json(buildQuote(cart, discount));
   } catch (error) {
     console.error("[cart.checkout] Unexpected error", error);
     res.status(500).json({ message: error.message });

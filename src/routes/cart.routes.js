@@ -31,6 +31,8 @@ const cartController = require("../../src/controller/cart.controller");
  */
 router.post("/add", auth, cartController.addToCart);
 
+router.put("/sync", auth, cartController.syncCart);
+
 /**
  * @swagger
  * /api/cart/checkout:
