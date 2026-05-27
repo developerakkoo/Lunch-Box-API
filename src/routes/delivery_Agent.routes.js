@@ -165,6 +165,8 @@ router.put("/update-location", driverAuth, attachDeliveryAgent, requireApprovedD
  */
 router.get("/orders", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.getOrdersByDeliveryStatus);
 
+router.get("/orders/:orderId", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.getOrderDetails);
+
 /**
  * @swagger
  * /api/delivery/orders/{orderId}/route:

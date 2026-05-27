@@ -165,6 +165,7 @@ module.exports = {
   STATUS_META,
   PROGRESS_TOTAL,
   CLOSED_STATUSES,
+  CLOSED_ORDER_STATUSES: CLOSED_STATUSES,
   USER_CANCEL_ALLOWED,
   getStatusMeta,
   buildOrderStatusPayload,
