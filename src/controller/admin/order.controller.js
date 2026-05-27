@@ -16,6 +16,100 @@ const {
 } = require("../../constants/orderStatus");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
+const isTruthy = (value) => value === true || value === "true" || value === 1 || value === "1";
+
+async function assignDriverToOrder(order, { deliveryAgentId, autoAssign } = {}) {
+  if (isTruthy(autoAssign)) {
+    const assignedDriver = await assignDeliveryBoy(order);
+    if (!assignedDriver) {
+      return {
+        status: 404,
+        message: "No available driver found",
+      };
+    }
+
+    const refreshed = await Order.findById(order._id);
+    await publishOrderEvent({
+      type: "ORDER_ASSIGNED",
+      order: refreshed,
+      updatedBy: "ADMIN",
+      driverId: assignedDriver._id,
+    });
+
+    return {
+      status: 200,
+      message: "Driver auto-assigned",
+      data: refreshed,
+    };
+  }
+
+  if (deliveryAgentId === null || deliveryAgentId === "") {
+    if (order.deliveryAgent) {
+      await clearDriverAssignment(order.deliveryAgent);
+    }
+
+    order.deliveryAgent = null;
+    await order.save();
+    await publishOrderEvent({ type: "ORDER_UNASSIGNED", order, updatedBy: "ADMIN" });
+
+    return {
+      status: 200,
+      message: "Driver unassigned",
+      data: order,
+    };
+  }
+
+  if (!isValidObjectId(deliveryAgentId)) {
+    return {
+      status: 400,
+      message: "Invalid delivery agent id",
+    };
+  }
+
+  const agent = await DeliveryAgent.findById(deliveryAgentId);
+  if (!agent) {
+    return {
+      status: 404,
+      message: "Delivery agent not found",
+    };
+  }
+
+  if (agent.deletedAt) {
+    return {
+      status: 400,
+      message: "This driver account is archived",
+    };
+  }
+
+  if (agent.status !== "APPROVED") {
+    return {
+      status: 400,
+      message: "Only approved drivers can be assigned to an order",
+    };
+  }
+
+  order.deliveryAgent = agent._id;
+  await order.save();
+
+  agent.currentOrder = order._id;
+  agent.isAvailable = false;
+  await agent.save();
+
+  global.io?.to(`delivery_${agent._id}`).emit("order_assigned", order);
+
+  await publishOrderEvent({
+    type: "ORDER_ASSIGNED",
+    order,
+    updatedBy: "ADMIN",
+    driverId: agent._id,
+  });
+
+  return {
+    status: 200,
+    message: "Driver assigned successfully",
+    data: order,
+  };
+}
 
 exports.getAllOrders = async (req, res) => {
   try {
@@ -164,68 +258,10 @@ exports.assignDriver = async (req, res) => {
       return res.status(409).json({ message: `Order is ${order.status}` });
     }
 
-    if (autoAssign === true) {
-      await assignDeliveryBoy(order);
-      const refreshed = await Order.findById(orderId);
-      await publishOrderEvent({
-        type: "ORDER_ASSIGNED",
-        order: refreshed,
-        updatedBy: "ADMIN",
-      });
-      return res.status(200).json({
-        message: "Driver auto-assigned",
-        data: refreshed,
-      });
-    }
-
-    if (deliveryAgentId === null || deliveryAgentId === "") {
-      if (order.deliveryAgent) {
-        await clearDriverAssignment(order.deliveryAgent);
-      }
-      order.deliveryAgent = null;
-      await order.save();
-      await publishOrderEvent({ type: "ORDER_UNASSIGNED", order, updatedBy: "ADMIN" });
-      return res.status(200).json({ message: "Driver unassigned", data: order });
-    }
-
-    if (!isValidObjectId(deliveryAgentId)) {
-      return res.status(400).json({ message: "Invalid delivery agent id" });
-    }
-
-    const agent = await DeliveryAgent.findById(deliveryAgentId);
-    if (!agent) {
-      return res.status(404).json({ message: "Delivery agent not found" });
-    }
-
-    if (agent.deletedAt) {
-      return res.status(400).json({ message: "This driver account is archived" });
-    }
-
-    if (agent.status !== "APPROVED") {
-      return res.status(400).json({
-        message: "Only approved drivers can be assigned to an order",
-      });
-    }
-
-    order.deliveryAgent = agent._id;
-    await order.save();
-
-    agent.currentOrder = order._id;
-    agent.isAvailable = false;
-    await agent.save();
-
-    global.io?.to(`delivery_${agent._id}`).emit("order_assigned", order);
-
-    await publishOrderEvent({
-      type: "ORDER_ASSIGNED",
-      order,
-      updatedBy: "ADMIN",
-      driverId: agent._id,
-    });
-
-    return res.status(200).json({
-      message: "Driver assigned successfully",
-      data: order,
+    const result = await assignDriverToOrder(order, { deliveryAgentId, autoAssign });
+    return res.status(result.status).json({
+      message: result.message,
+      data: result.data,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -235,7 +271,7 @@ exports.assignDriver = async (req, res) => {
 exports.updateOrderStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { status } = req.body || {};
+    const { status, deliveryAgentId, autoAssign } = req.body || {};
 
     if (!isValidObjectId(orderId)) {
       return res.status(400).json({ message: "Invalid order id" });
@@ -263,6 +299,20 @@ exports.updateOrderStatus = async (req, res) => {
 
     if (CLOSED_ORDER_STATUSES.includes(order.status) && status !== order.status) {
       return res.status(409).json({ message: `Order already ${order.status.toLowerCase()}` });
+    }
+
+    const isAssignmentRequest =
+      status === "ACCEPTED" && order.status === "READY";
+
+    if (isAssignmentRequest) {
+      const result = await assignDriverToOrder(order, {
+        deliveryAgentId,
+        autoAssign: autoAssign !== undefined ? autoAssign : deliveryAgentId === undefined ? true : undefined,
+      });
+      return res.status(result.status).json({
+        message: result.message,
+        data: result.data,
+      });
     }
 
     if (!canTransition(order.status, status, "ADMIN")) {
