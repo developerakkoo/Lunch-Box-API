@@ -1,42 +1,64 @@
 const Cart = require("../module/cart.model");
 const MenuItem = require("../module/menuItem.model");
-const Coupon = require("../module/coupon.model"); 
-const User = require("../module/user.model");
+const Coupon = require("../module/coupon.model");
+
+const logCartWarning = (message, details = {}) => {
+  console.warn(`[cart] ${message}`, details);
+};
 
 exports.addToCart = async (req, res) => {
   try {
     const userId = req.user.id;
     const { menuItemId, quantity = 1 } = req.body;
 
+    if (!menuItemId) {
+      logCartWarning("menuItemId is missing", { userId, body: req.body });
+      return res.status(400).json({ message: "menuItemId is required" });
+    }
+
+    const normalizedQuantity = Number(quantity);
+    if (!Number.isFinite(normalizedQuantity) || normalizedQuantity <= 0) {
+      logCartWarning("Invalid quantity", { userId, menuItemId, quantity });
+      return res.status(400).json({ message: "quantity must be a positive number" });
+    }
+
     const menuItem = await MenuItem.findById(menuItemId);
     if (!menuItem) {
+      logCartWarning("Menu item not found", { userId, menuItemId });
       return res.status(404).json({ message: "Menu item not found" });
     }
 
     let cart = await Cart.findOne({ userId });
 
-    const totalItemPrice = menuItem.price * quantity;
+    const totalItemPrice = menuItem.price * normalizedQuantity;
 
     if (!cart) {
       cart = await Cart.create({
         userId,
-        kitchenId: menuItem.partner, // kitchen owner
-        items: [{
-          productId: menuItem._id,
-          kitchenId: menuItem.partner,
-          name: menuItem.name,
-          price: menuItem.price,
-          quantity,
-          totalItemPrice
-        }],
+        kitchenId: menuItem.partner,
+        items: [
+          {
+            productId: menuItem._id,
+            kitchenId: menuItem.partner,
+            name: menuItem.name,
+            price: menuItem.price,
+            quantity: normalizedQuantity,
+            totalItemPrice
+          }
+        ],
         totalAmount: totalItemPrice
       });
 
       return res.json({ message: "Item added to cart", cart });
     }
 
-    // ❗ Prevent multiple kitchens
     if (cart.kitchenId.toString() !== menuItem.partner.toString()) {
+      logCartWarning("Multiple kitchen attempt blocked", {
+        userId,
+        existingKitchenId: cart.kitchenId?.toString(),
+        requestedKitchenId: menuItem.partner?.toString(),
+        menuItemId
+      });
       return res.status(400).json({
         message: "You can only order from one kitchen at a time"
       });
@@ -47,7 +69,7 @@ exports.addToCart = async (req, res) => {
     );
 
     if (existingItem) {
-      existingItem.quantity += quantity;
+      existingItem.quantity += normalizedQuantity;
       existingItem.totalItemPrice += totalItemPrice;
     } else {
       cart.items.push({
@@ -55,12 +77,11 @@ exports.addToCart = async (req, res) => {
         kitchenId: menuItem.partner,
         name: menuItem.name,
         price: menuItem.price,
-        quantity,
+        quantity: normalizedQuantity,
         totalItemPrice
       });
     }
 
-    // Recalculate total properly
     cart.totalAmount = cart.items.reduce(
       (sum, item) => sum + item.totalItemPrice,
       0
@@ -69,12 +90,11 @@ exports.addToCart = async (req, res) => {
     await cart.save();
 
     res.json({ message: "Cart updated successfully", cart });
-
   } catch (error) {
+    console.error("[cart.addToCart] Unexpected error", error);
     res.status(500).json({ message: error.message });
   }
 };
-
 
 exports.checkout = async (req, res) => {
   try {
@@ -89,7 +109,6 @@ exports.checkout = async (req, res) => {
 
     let discount = 0;
 
-    // 🔹 Apply Coupon
     if (couponCode) {
       const now = new Date();
       const coupon = await Coupon.findOne({
@@ -138,11 +157,9 @@ exports.checkout = async (req, res) => {
       }
     }
 
-    const deliveryCharge = 30; // example
+    const deliveryCharge = 30;
     const tax = cart.totalAmount * 0.05;
-
-    const finalAmount =
-      cart.totalAmount + deliveryCharge + tax - discount;
+    const finalAmount = cart.totalAmount + deliveryCharge + tax - discount;
 
     res.json({
       cartAmount: cart.totalAmount,
@@ -151,8 +168,8 @@ exports.checkout = async (req, res) => {
       deliveryCharge,
       finalAmount
     });
-
   } catch (error) {
+    console.error("[cart.checkout] Unexpected error", error);
     res.status(500).json({ message: error.message });
   }
 };
