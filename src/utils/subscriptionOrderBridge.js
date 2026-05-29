@@ -53,7 +53,10 @@ async function materializeOrderFromSubscriptionDelivery(deliveryId) {
   const menuItemId = sub.menuItemId;
 
   const user = await User.findById(userId).select("addresses");
-  const address = pickAddress(user);
+  const address =
+    sub.deliveryAddress?.fullAddress
+      ? sub.deliveryAddress
+      : pickAddress(user);
   if (!address?.fullAddress) {
     logger.error("materializeSubscriptionOrder: user has no saved address", { userId });
     return null;
@@ -90,7 +93,7 @@ async function materializeOrderFromSubscriptionDelivery(deliveryId) {
       itemTotal: unitPrice,
       tax: 0,
       deliveryCharge: 0,
-      platformFee: 0,
+      platformFee: sub.platformFeeAmount ? sub.platformFeeAmount / (sub.durationInDays || 1) : 0,
       discount: 0,
       totalAmount: unitPrice,
     },

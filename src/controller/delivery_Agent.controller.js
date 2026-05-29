@@ -826,3 +826,48 @@ exports.getDashboard = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
+/** Group subscription-linked orders for driver UI (by restaurant, time slot, or area). */
+exports.getSubscriptionDeliveriesGrouped = async (req, res) => {
+  try {
+    const agentId = req.deliveryAgent?._id || req.deliveryAgent?.id;
+    if (!agentId) {
+      return res.status(401).json({ message: "Driver not authenticated" });
+    }
+
+    const { by = "restaurant" } = req.query;
+
+    const orders = await Order.find({
+      deliveryAgent: agentId,
+      orderType: "SUBSCRIPTION",
+      status: { $in: ["READY", "OUT_FOR_DELIVERY"] }
+    })
+      .populate("partner", "kitchenName address latitude longitude")
+      .populate("subscriptionDeliveryId", "timeSlot mealType deliveryDate")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const grouped = {};
+    for (const o of orders) {
+      let key;
+      if (by === "slot") {
+        key = o.subscriptionDeliveryId?.timeSlot || "Unslotted";
+      } else if (by === "area") {
+        key =
+          (o.deliveryAddress?.fullAddress || "Unknown").split(",").slice(-1)[0]?.trim() ||
+          "Unknown";
+      } else {
+        key = o.partner?.kitchenName || String(o.partner?._id || o.partner);
+      }
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(o);
+    }
+
+    return res.status(200).json({
+      message: "Grouped subscription deliveries",
+      data: { groupBy: by, groups: grouped }
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};

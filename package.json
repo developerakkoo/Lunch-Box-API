@@ -4,7 +4,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "test": "node --test src/__tests__/*.test.js"
   },
   "keywords": [],
   "author": "",
@@ -17,11 +18,13 @@
     "cors": "^2.8.6",
     "dotenv": "^17.2.4",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.2.0",
     "morgan": "^1.10.1",
     "multer": "^2.1.1",
+    "node-cron": "^4.2.1",
     "razorpay": "^2.9.6",
     "socket.io": "^4.8.3",
     "stripe": "^18.3.0",

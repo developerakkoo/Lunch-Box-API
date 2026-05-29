@@ -4,17 +4,19 @@ const subscriptionDeliverySchema = new mongoose.Schema(
   {
     userSubscriptionId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "UserSubscription",
+      ref: "UserSubscription"
     },
-
-    deliveryDate: {
-      type: Date,
-      required: true,
+    deliveryDate: { type: Date, required: true },
+    mealType: {
+      type: String,
+      enum: ["BREAKFAST", "LUNCH", "DINNER", "CUSTOM"],
+      default: "LUNCH"
     },
-
+    timeSlot: String,
     status: {
       type: String,
       enum: [
+        "PENDING",
         "PENDING_PARTNER",
         "ACCEPTED",
         "PREPARING",
@@ -23,23 +25,23 @@ const subscriptionDeliverySchema = new mongoose.Schema(
         "DELIVERED",
         "REJECTED",
         "CANCELLED",
-        "SKIPPED",
-        "PENDING",
+        "SKIPPED"
       ],
-      default: "PENDING_PARTNER",
+      default: "PENDING"
     },
-
     deliveryBoyId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "DeliveryAgent",
+      ref: "DeliveryAgent"
     },
-
     linkedOrderId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Order",
-      default: null,
+      default: null
     },
-
+    activatedAt: Date,
+    skippedAt: Date,
+    skipReason: String,
+    mealCreditApplied: { type: Boolean, default: false },
     timeline: {
       acceptedAt: Date,
       preparingAt: Date,
@@ -47,15 +49,14 @@ const subscriptionDeliverySchema = new mongoose.Schema(
       pickedAt: Date,
       deliveredAt: Date,
       rejectedAt: Date,
-      cancelledAt: Date,
+      cancelledAt: Date
     },
-
-    rejectionReason: String,
+    rejectionReason: String
   },
   { timestamps: true }
 );
 
-subscriptionDeliverySchema.index({ deliveryDate: 1 });
+subscriptionDeliverySchema.index({ deliveryDate: 1, status: 1 });
 subscriptionDeliverySchema.index({ userSubscriptionId: 1, deliveryDate: 1 });
 
 module.exports = mongoose.model("SubscriptionDelivery", subscriptionDeliverySchema);

@@ -208,8 +208,14 @@ router.get('/orders/summary', auth, controller.getKitchenOrdersSummary)
 router.get('/subscription-orders', auth, controller.getSubscriptionOrdersByStatus)
 
 const subDeliveryController = require('../controller/subscriptionDelivery.controller');
+const partnerPlanController = require('../controller/partnerSubscriptionPlan.controller');
 router.get('/subscription-deliveries', auth, subDeliveryController.partnerListDeliveries);
 router.patch('/subscription-deliveries/:id/action', auth, subDeliveryController.partnerDeliveryAction);
+router.get('/subscriptions/plans', auth, partnerPlanController.listPlans);
+router.post('/subscriptions/plans', auth, partnerPlanController.createPlan);
+router.patch('/subscriptions/plans/:id', auth, partnerPlanController.updatePlan);
+router.delete('/subscriptions/plans/:id', auth, partnerPlanController.deletePlan);
+router.get('/subscriptions/stats', auth, partnerPlanController.getSubscriptionStats);
 
 /**
  * @swagger

@@ -77,7 +77,7 @@ exports.getSubscriptions = async (req, res) => {
         .populate("userId", "fullName mobileNumber email")
         .populate("partnerId", "kitchenName ownerName")
         .populate("menuItemId", "name")
-        .populate("subscriptionPlanId", "name durationInDays")
+        .populate("subscriptionPlanId", "title durationInDays planType")
         .sort({ createdAt: -1 })
         .skip((pageNumber - 1) * limitNumber)
         .limit(limitNumber),
@@ -105,7 +105,7 @@ exports.getSubscriptionById = async (req, res) => {
       .populate("userId", "fullName mobileNumber email")
       .populate("partnerId", "kitchenName ownerName address")
       .populate("menuItemId", "name price")
-      .populate("subscriptionPlanId", "name durationInDays mealsPerDay");
+      .populate("subscriptionPlanId", "title durationInDays mealsPerDay planType");
 
     if (!subscription) {
       return res.status(404).json({ message: "Subscription not found" });

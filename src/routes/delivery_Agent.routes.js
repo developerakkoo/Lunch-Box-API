@@ -362,4 +362,12 @@ router.patch("/notifications/read-all", driverAuth, attachDeliveryAgent, control
  */
 router.get("/dashboard", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.getDashboard);
 
+router.get(
+  "/subscription-deliveries/grouped",
+  driverAuth,
+  attachDeliveryAgent,
+  requireApprovedDriver,
+  controller.getSubscriptionDeliveriesGrouped
+);
+
 module.exports = router;

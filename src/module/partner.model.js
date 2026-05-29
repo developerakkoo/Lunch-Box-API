@@ -51,7 +51,14 @@ const partnerSchema = new mongoose.Schema(
       type: String,
       enum: ["ACTIVE", "INACTIVE"],
       default: "ACTIVE"
-    }
+    },
+
+    walletBalance: {
+      type: Number,
+      default: 0
+    },
+
+    subscriptionCommissionPercent: Number
   },
   { timestamps: true }
 );

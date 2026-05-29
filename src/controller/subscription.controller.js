@@ -1,64 +1,39 @@
 const SubscriptionPlan = require("../module/subscriptionPlan.model");
 const UserSubscription = require("../module/userSubscription.model");
 const SubscriptionDelivery = require("../module/subscriptionDelivery.model");
-const User = require("../module/user.model");
-const WalletTransaction = require("../module/walletTransaction.model");
+const SubscriptionTransaction = require("../module/subscriptionTransaction.model");
 const { createOrder: createRazorpayOrder, verifySignature } = require("../utils/razorpay");
 const { createPaymentIntent, retrievePaymentIntent } = require("../utils/stripe");
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-const createWalletLedgerEntry = async ({
-  userId,
-  type,
-  source,
-  amount,
-  balanceBefore,
-  balanceAfter,
-  status = "SUCCESS",
-  gateway = "SYSTEM",
-  externalTxnId,
-  referenceType,
-  referenceId,
-  notes
-}) => {
-  return WalletTransaction.create({
-    userId,
-    type,
-    source,
-    amount,
-    balanceBefore,
-    balanceAfter,
-    status,
-    gateway,
-    externalTxnId,
-    referenceType,
-    referenceId,
-    notes
-  });
-};
-
-const scheduleSubscriptionDeliveries = async (userSubscription) => {
-  const deliveries = [];
-  for (let i = 0; i < userSubscription.durationInDays; i += 1) {
-    deliveries.push({
-      userSubscriptionId: userSubscription._id,
-      deliveryDate: new Date(userSubscription.startDate.getTime() + i * DAY_MS),
-      status: "PENDING_PARTNER"
-    });
-  }
-
-  if (deliveries.length > 0) {
-    await SubscriptionDelivery.insertMany(deliveries);
-  }
-};
+const { postLedgerEntry } = require("../services/walletLedger.service");
+const {
+  resolveCommissionPercent,
+  recordSubscriptionPaymentSplit
+} = require("../services/subscriptionCommission.service");
+const { scheduleSubscriptionDeliveries, DAY_MS } = require("../services/subscriptionSchedule.service");
+const {
+  resolveAddress,
+  pauseSubscription,
+  resumeSubscription,
+  skipDelivery,
+  updateDeliveryAddress,
+  cancelSubscription,
+  changePlan
+} = require("../services/subscriptionLifecycle.service");
+const { logAudit } = require("../services/subscriptionAudit.service");
+const {
+  notifyUserSubscriptionEvent,
+  notifyPartnerSubscription
+} = require("../services/subscriptionNotification.service");
 
 exports.listPlans = async (req, res) => {
   try {
-    const { kitchenId, menuItemId } = req.query;
-    const filter = { isActive: true };
+    const { kitchenId, menuItemId, mealType, planType, tag } = req.query;
+    const filter = { isActive: true, visibility: "PUBLIC" };
     if (kitchenId) filter.partnerId = kitchenId;
     if (menuItemId) filter.menuItemId = menuItemId;
+    if (mealType) filter.$or = [{ mealType }, { mealTypes: mealType }];
+    if (planType) filter.planType = planType;
+    if (tag) filter.tags = tag;
 
     const plans = await SubscriptionPlan.find(filter)
       .populate("partnerId", "kitchenName address")
@@ -73,18 +48,60 @@ exports.listPlans = async (req, res) => {
   }
 };
 
+exports.getActiveSubscriptions = async (req, res) => {
+  try {
+    const subscriptions = await UserSubscription.find({
+      userId: req.user.id,
+      status: { $in: ["ACTIVE", "PAUSED", "PENDING_PAYMENT"] }
+    })
+      .populate("partnerId", "kitchenName address")
+      .populate("menuItemId", "name image")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      message: "Active subscriptions fetched",
+      data: subscriptions
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 exports.purchaseSubscription = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { planId, startDate, paymentMethod = "WALLET" } = req.body;
+    const {
+      planId,
+      startDate,
+      paymentMethod = "WALLET",
+      addressId,
+      mealPreferences,
+      autoRenew = false,
+      idempotencyKey
+    } = req.body;
 
     if (!planId) {
       return res.status(400).json({ message: "planId is required" });
     }
 
+    if (idempotencyKey) {
+      const existing = await UserSubscription.findOne({ userId, idempotencyKey });
+      if (existing) {
+        return res.status(200).json({
+          message: "Subscription already created",
+          data: existing
+        });
+      }
+    }
+
     const plan = await SubscriptionPlan.findById(planId);
     if (!plan || !plan.isActive) {
       return res.status(404).json({ message: "Subscription plan not found" });
+    }
+
+    const addressSnapshot = await resolveAddress(userId, addressId);
+    if (!addressSnapshot?.fullAddress) {
+      return res.status(400).json({ message: "Valid delivery address is required" });
     }
 
     const start = startDate ? new Date(startDate) : new Date();
@@ -93,6 +110,11 @@ exports.purchaseSubscription = async (req, res) => {
     }
 
     const end = new Date(start.getTime() + (plan.durationInDays - 1) * DAY_MS);
+    const payAmount = plan.discountedPrice ?? plan.totalPrice;
+    const commissionPercent = await resolveCommissionPercent({
+      partnerId: plan.partnerId,
+      planId: plan._id
+    });
 
     const userSubscription = await UserSubscription.create({
       userId,
@@ -102,10 +124,15 @@ exports.purchaseSubscription = async (req, res) => {
       title: plan.title,
       durationInDays: plan.durationInDays,
       pricePerMeal: plan.pricePerMeal,
-      totalPrice: plan.totalPrice,
+      totalPrice: payAmount,
       startDate: start,
       endDate: end,
       status: paymentMethod === "WALLET" ? "ACTIVE" : "PENDING_PAYMENT",
+      deliveryAddress: addressSnapshot,
+      mealPreferences,
+      autoRenew: Boolean(autoRenew) && plan.autoRenewAllowed,
+      idempotencyKey,
+      commissionPercent,
       payment: {
         method: paymentMethod,
         paymentStatus: paymentMethod === "WALLET" ? "PAID" : "PENDING"
@@ -113,52 +140,87 @@ exports.purchaseSubscription = async (req, res) => {
     });
 
     if (paymentMethod === "WALLET") {
-      const user = await User.findById(userId);
-      if (!user) return res.status(404).json({ message: "User not found" });
-      if ((user.walletBalance || 0) < plan.totalPrice) {
+      try {
+        await postLedgerEntry({
+          ownerType: "USER",
+          ownerId: userId,
+          type: "DEBIT",
+          source: "SUBSCRIPTION_PAYMENT",
+          amount: payAmount,
+          gateway: "WALLET",
+          referenceType: "UserSubscription",
+          referenceId: userSubscription._id,
+          notes: "Subscription purchased with wallet"
+        });
+
+        const split = await recordSubscriptionPaymentSplit({
+          userId,
+          partnerId: plan.partnerId,
+          totalAmount: payAmount,
+          userSubscriptionId: userSubscription._id,
+          paymentMethod: "WALLET"
+        });
+
+        userSubscription.platformFeeAmount = split.commissionAmount;
+        userSubscription.partnerNetAmount = split.partnerNetAmount;
+        await userSubscription.save();
+
+        const txn = await SubscriptionTransaction.create({
+          userSubscriptionId: userSubscription._id,
+          userId,
+          partnerId: plan.partnerId,
+          type: "PURCHASE",
+          amount: payAmount,
+          commissionAmount: split.commissionAmount,
+          partnerNetAmount: split.partnerNetAmount,
+          platformFeeAmount: split.commissionAmount,
+          paymentMethod: "WALLET",
+          paymentStatus: "PAID"
+        });
+
+        await scheduleSubscriptionDeliveries(userSubscription, plan);
+
+        await notifyUserSubscriptionEvent(userId, {
+          title: "Subscription activated",
+          message: `Your ${plan.title} plan is now active.`,
+          type: "ACTIVATED"
+        });
+        await notifyPartnerSubscription(plan.partnerId, {
+          title: "New subscriber",
+          message: "A customer subscribed to your meal plan.",
+          type: "NEW_SUBSCRIBER"
+        });
+
+        await logAudit({
+          entityType: "UserSubscription",
+          entityId: userSubscription._id,
+          action: "PURCHASE",
+          actorType: "USER",
+          actorId: userId,
+          metadata: { transactionId: txn._id }
+        });
+
+        return res.status(201).json({
+          message: "Subscription purchased successfully",
+          data: userSubscription
+        });
+      } catch (payErr) {
         await UserSubscription.findByIdAndDelete(userSubscription._id);
-        return res.status(400).json({ message: "Insufficient wallet balance" });
+        return res.status(400).json({ message: payErr.message });
       }
-
-      const before = user.walletBalance || 0;
-      user.walletBalance = before - plan.totalPrice;
-      await user.save();
-
-      await createWalletLedgerEntry({
-        userId,
-        type: "DEBIT",
-        source: "SUBSCRIPTION_PAYMENT",
-        amount: plan.totalPrice,
-        balanceBefore: before,
-        balanceAfter: user.walletBalance,
-        gateway: "WALLET",
-        referenceType: "UserSubscription",
-        referenceId: userSubscription._id,
-        notes: "Subscription purchased with wallet"
-      });
-
-      await scheduleSubscriptionDeliveries(userSubscription);
-      return res.status(201).json({
-        message: "Subscription purchased successfully",
-        data: userSubscription
-      });
     }
 
-    if (paymentMethod === "RAZORPAY") {
-      const razorpayOrder = await createRazorpayOrder(Math.round(plan.totalPrice * 100));
-      userSubscription.payment.gatewayOrderId = razorpayOrder.id;
-      await userSubscription.save();
-
+    if (paymentMethod === "ONLINE") {
       return res.status(201).json({
-        message: "Subscription created, complete payment",
+        message: "Subscription created, complete payment to activate",
         data: userSubscription,
-        razorpayOrder
+        requiresPaymentConfirmation: true
       });
     }
 
     if (paymentMethod === "STRIPE") {
       const paymentIntent = await createPaymentIntent({
-        amount: Math.round(plan.totalPrice * 100),
+        amount: Math.round(payAmount * 100),
         currency: "inr",
         metadata: {
           userSubscriptionId: String(userSubscription._id),
@@ -188,6 +250,8 @@ exports.purchaseSubscription = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
+const { finalizePaidSubscription } = require("../services/subscriptionPayment.service");
 
 exports.confirmSubscriptionPayment = async (req, res) => {
   try {
@@ -226,7 +290,10 @@ exports.confirmSubscriptionPayment = async (req, res) => {
         return res.status(400).json({ message: "Invalid Razorpay signature" });
       }
 
-      if (subscription.payment.gatewayOrderId && subscription.payment.gatewayOrderId !== razorpay_order_id) {
+      if (
+        subscription.payment.gatewayOrderId &&
+        subscription.payment.gatewayOrderId !== razorpay_order_id
+      ) {
         return res.status(400).json({ message: "Razorpay order id mismatch" });
       }
 
@@ -235,8 +302,7 @@ exports.confirmSubscriptionPayment = async (req, res) => {
       subscription.payment.gatewayOrderId = razorpay_order_id;
       subscription.payment.gatewayPaymentId = razorpay_payment_id;
       await subscription.save();
-
-      await scheduleSubscriptionDeliveries(subscription);
+      await finalizePaidSubscription(subscription);
 
       return res.status(200).json({
         message: "Subscription payment confirmed",
@@ -250,20 +316,12 @@ exports.confirmSubscriptionPayment = async (req, res) => {
         return res.status(400).json({ message: "Stripe payment not successful" });
       }
 
-      if (
-        subscription.payment.gatewayOrderId &&
-        subscription.payment.gatewayOrderId !== stripe_payment_intent_id
-      ) {
-        return res.status(400).json({ message: "Stripe payment intent mismatch" });
-      }
-
       subscription.status = "ACTIVE";
       subscription.payment.paymentStatus = "PAID";
       subscription.payment.gatewayOrderId = stripe_payment_intent_id;
       subscription.payment.gatewayPaymentId = stripe_payment_intent_id;
       await subscription.save();
-
-      await scheduleSubscriptionDeliveries(subscription);
+      await finalizePaidSubscription(subscription);
 
       return res.status(200).json({
         message: "Subscription payment confirmed",
@@ -271,7 +329,134 @@ exports.confirmSubscriptionPayment = async (req, res) => {
       });
     }
 
+    if (gateway === "MARK_PAID") {
+      if (subscription.payment?.method !== "ONLINE") {
+        return res.status(400).json({
+          message: "Mark-paid confirmation is only for ONLINE payment method"
+        });
+      }
+
+      subscription.status = "ACTIVE";
+      subscription.payment.paymentStatus = "PAID";
+      subscription.payment.gatewayPaymentId =
+        subscription.payment.gatewayPaymentId || `mark_paid_${Date.now()}`;
+      await subscription.save();
+      await finalizePaidSubscription(subscription);
+
+      return res.status(200).json({
+        message: "Subscription payment marked complete",
+        data: subscription
+      });
+    }
+
     return res.status(400).json({ message: "Invalid gateway" });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.pauseSubscription = async (req, res) => {
+  try {
+    const sub = await pauseSubscription(req.params.subscriptionId, req.user.id, req.body);
+    return res.status(200).json({ message: "Subscription paused", data: sub });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
+
+exports.resumeSubscription = async (req, res) => {
+  try {
+    const sub = await resumeSubscription(req.params.subscriptionId, req.user.id);
+    return res.status(200).json({ message: "Subscription resumed", data: sub });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
+
+exports.skipDelivery = async (req, res) => {
+  try {
+    const result = await skipDelivery(
+      req.params.subscriptionId,
+      req.user.id,
+      req.params.deliveryId
+    );
+    return res.status(200).json({ message: "Meal skipped", data: result });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
+
+exports.updateSubscriptionAddress = async (req, res) => {
+  try {
+    const sub = await updateDeliveryAddress(
+      req.params.subscriptionId,
+      req.user.id,
+      req.body.addressId
+    );
+    return res.status(200).json({ message: "Address updated", data: sub });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
+
+exports.cancelSubscription = async (req, res) => {
+  try {
+    const sub = await cancelSubscription(req.params.subscriptionId, req.user.id, req.body);
+    return res.status(200).json({ message: "Subscription cancelled", data: sub });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
+
+exports.renewSubscription = async (req, res) => {
+  try {
+    const sub = await UserSubscription.findOne({
+      _id: req.params.subscriptionId,
+      userId: req.user.id
+    });
+    if (!sub) return res.status(404).json({ message: "Subscription not found" });
+
+    const { attemptAutoRenewal } = require("../services/subscriptionRenewal.service");
+    const result = await attemptAutoRenewal(sub);
+    if (!result) {
+      return res.status(400).json({ message: "Renewal could not be processed" });
+    }
+    return res.status(200).json({ message: "Renewal initiated", data: result });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.upgradeSubscription = async (req, res) => {
+  try {
+    const { planId } = req.body;
+    const sub = await changePlan(req.params.subscriptionId, req.user.id, planId, {
+      direction: "upgrade"
+    });
+    return res.status(200).json({ message: "Plan upgraded", data: sub });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
+
+exports.downgradeSubscription = async (req, res) => {
+  try {
+    const { planId } = req.body;
+    const sub = await changePlan(req.params.subscriptionId, req.user.id, planId, {
+      direction: "downgrade"
+    });
+    return res.status(200).json({ message: "Plan downgraded", data: sub });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
+
+exports.getSubscriptionTransactions = async (req, res) => {
+  try {
+    const txns = await SubscriptionTransaction.find({ userId: req.user.id })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    return res.status(200).json({ message: "Transactions fetched", data: txns });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -306,7 +491,7 @@ exports.getUpcomingSubscriptionDeliveries = async (req, res) => {
     const deliveries = await SubscriptionDelivery.find({
       userSubscriptionId: { $in: ids },
       deliveryDate: { $gte: now },
-      status: "PENDING_PARTNER"
+      status: { $in: ["PENDING", "PENDING_PARTNER", "ACCEPTED", "PREPARING", "READY"] }
     })
       .populate({
         path: "userSubscriptionId",
@@ -326,7 +511,6 @@ exports.getUpcomingSubscriptionDeliveries = async (req, res) => {
   }
 };
 
-/** Calendar-friendly range query: all deliveries for user's subscriptions within [from, to] inclusive. */
 exports.getSubscriptionDeliveriesCalendarRange = async (req, res) => {
   try {
     const userId = req.user.id;

@@ -94,6 +94,9 @@ app.use("/api/addon", addonRoutes);
 app.use("/api/order", orderRoutes);
 app.use("/api/cart", createCart);
 
+const webhookController = require("./controller/webhook.controller");
+app.post("/api/webhooks/razorpay", webhookController.razorpayWebhook);
+
 
 
 /* ----------------------------- ADMIN ROUTES -------------------------------- */

@@ -566,4 +566,51 @@ router.get(
   subscriptionController.getUpcomingSubscriptionDeliveries
 );
 
+router.get("/subscriptions/active", auth, subscriptionController.getActiveSubscriptions);
+router.get(
+  "/subscriptions/transactions",
+  auth,
+  subscriptionController.getSubscriptionTransactions
+);
+router.post(
+  "/subscriptions/:subscriptionId/pause",
+  auth,
+  subscriptionController.pauseSubscription
+);
+router.post(
+  "/subscriptions/:subscriptionId/resume",
+  auth,
+  subscriptionController.resumeSubscription
+);
+router.post(
+  "/subscriptions/:subscriptionId/deliveries/:deliveryId/skip",
+  auth,
+  subscriptionController.skipDelivery
+);
+router.patch(
+  "/subscriptions/:subscriptionId/address",
+  auth,
+  subscriptionController.updateSubscriptionAddress
+);
+router.post(
+  "/subscriptions/:subscriptionId/cancel",
+  auth,
+  subscriptionController.cancelSubscription
+);
+router.post(
+  "/subscriptions/:subscriptionId/renew",
+  auth,
+  subscriptionController.renewSubscription
+);
+router.post(
+  "/subscriptions/:subscriptionId/upgrade",
+  auth,
+  subscriptionController.upgradeSubscription
+);
+router.post(
+  "/subscriptions/:subscriptionId/downgrade",
+  auth,
+  subscriptionController.downgradeSubscription
+);
+
 module.exports = router;
