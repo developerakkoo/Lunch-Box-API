@@ -55,5 +55,6 @@ module.exports = {
   PUBLIC_ASSET_BASE_URL,
   getUploadedFileName,
   normalizeAssetValue,
+  normalizeStoredAssetPath,
   parsePossiblyJsonArray
 };

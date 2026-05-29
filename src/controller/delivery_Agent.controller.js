@@ -20,7 +20,7 @@ const {
   setDriverAssignment,
   setDriverPresence
 } = require("../utils/orderEvents");
-const { normalizeStoredAssetPath } = require("../utils/media");
+const { getUploadedFileName, normalizeStoredAssetPath } = require("../utils/media");
 const { transitionOrder } = require("../services/orderTransition.service");
 const {
   markSubscriptionDeliveryDeliveredFromOrder,
