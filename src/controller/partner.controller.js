@@ -465,7 +465,7 @@ exports.getSubscriptionOrdersByStatus = async (req, res) => {
     const pageNumber = Math.max(Number(page) || 1, 1);
     const limitNumber = Math.max(Number(limit) || 20, 1);
 
-    const subscriptions = await UserSubscription.find({ partnerId })
+    const subscriptions = await UserSubscription.find({ partnerId, status: "ACTIVE" })
       .select("_id")
       .lean();
 

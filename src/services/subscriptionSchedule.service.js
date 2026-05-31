@@ -28,7 +28,6 @@ function resolveMealTypesForPlan(plan) {
 }
 
 function isDateInPause(subscription, date) {
-  if (subscription.status === "PAUSED") return true;
   const d = startOfDay(date).getTime();
   for (const p of subscription.pausePeriods || []) {
     const s = startOfDay(p.start).getTime();
@@ -36,6 +35,105 @@ function isDateInPause(subscription, date) {
     if (d >= s && d <= e) return true;
   }
   return false;
+}
+
+function eachDayInRange(from, to) {
+  const days = [];
+  let cursor = startOfDay(from);
+  const end = startOfDay(to);
+  while (cursor.getTime() <= end.getTime()) {
+    days.push(new Date(cursor));
+    cursor = new Date(cursor.getTime() + DAY_MS);
+  }
+  return days;
+}
+
+async function findOccupiedDates(subscriptionId, excludeDeliveryId = null) {
+  const deliveries = await SubscriptionDelivery.find({
+    userSubscriptionId: subscriptionId,
+    status: { $nin: ["CANCELLED", "SKIPPED", "REJECTED"] }
+  }).select("deliveryDate _id");
+
+  const occupied = new Set();
+  for (const d of deliveries) {
+    if (excludeDeliveryId && String(d._id) === String(excludeDeliveryId)) continue;
+    occupied.add(startOfDay(d.deliveryDate).getTime());
+  }
+  return occupied;
+}
+
+async function findNextFreeDate(subscriptionId, fromDate, occupiedOverride = null) {
+  const occupied = occupiedOverride || (await findOccupiedDates(subscriptionId));
+  let candidate = startOfDay(fromDate);
+  while (occupied.has(candidate.getTime())) {
+    candidate = new Date(candidate.getTime() + DAY_MS);
+  }
+  occupied.add(candidate.getTime());
+  return candidate;
+}
+
+async function shiftDeliveriesInPauseWindow(subscription, pauseStart, pauseEnd, { dryRun = false } = {}) {
+  if (!pauseEnd) throw new Error("Pause end date is required");
+
+  const windowStart = startOfDay(pauseStart);
+  const windowEnd = startOfDay(pauseEnd);
+  const pauseDays = eachDayInRange(windowStart, windowEnd);
+
+  const deliveries = await SubscriptionDelivery.find({
+    userSubscriptionId: subscription._id,
+    status: { $in: ["PENDING", "PENDING_PARTNER"] }
+  }).sort({ deliveryDate: 1 });
+
+  let shiftedCount = 0;
+  const occupied = await findOccupiedDates(subscription._id);
+  const updates = [];
+
+  for (const pauseDay of pauseDays) {
+    const dayStart = startOfDay(pauseDay);
+    const dayEnd = endOfDay(pauseDay);
+    const dayDeliveries = deliveries.filter((d) => {
+      const t = d.deliveryDate.getTime();
+      return t >= dayStart.getTime() && t <= dayEnd.getTime();
+    });
+
+    for (const delivery of dayDeliveries) {
+      occupied.delete(startOfDay(delivery.deliveryDate).getTime());
+      const targetDate = await findNextFreeDate(
+        subscription._id,
+        new Date(dayStart.getTime() + DAY_MS),
+        occupied
+      );
+      updates.push({
+        deliveryId: delivery._id,
+        fromDate: delivery.deliveryDate,
+        toDate: targetDate,
+        revertPartnerQueue: delivery.status === "PENDING_PARTNER"
+      });
+      shiftedCount += 1;
+    }
+  }
+
+  const newEndDate = new Date(subscription.endDate.getTime() + shiftedCount * DAY_MS);
+
+  if (dryRun) {
+    return { shiftedCount, newEndDate, updates };
+  }
+
+  for (const update of updates) {
+    await SubscriptionDelivery.updateOne(
+      { _id: update.deliveryId },
+      {
+        $set: {
+          deliveryDate: startOfDay(update.toDate),
+          status: "PENDING",
+          activatedAt: null
+        }
+      }
+    );
+  }
+
+  subscription.endDate = newEndDate;
+  return { shiftedCount, newEndDate, updates };
 }
 
 async function scheduleSubscriptionDeliveries(userSubscription, planDoc) {
@@ -180,6 +278,8 @@ module.exports = {
   startOfDay,
   endOfDay,
   isDateInPause,
+  eachDayInRange,
+  shiftDeliveriesInPauseWindow,
   scheduleSubscriptionDeliveries,
   appendReplacementDelivery,
   activateDueDeliveries,

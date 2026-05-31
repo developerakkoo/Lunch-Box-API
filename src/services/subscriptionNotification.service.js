@@ -13,10 +13,11 @@ async function notifyUserSubscriptionEvent(userId, { title, message, type }) {
 }
 
 async function notifyPartnerSubscription(partnerId, payload) {
-  await notifyPartner(partnerId, {
+  await notifyPartner({
+    partnerId,
     title: payload.title,
     message: payload.message,
-    type: payload.type || "SUBSCRIPTION",
+    type: "SUBSCRIPTION_ORDER",
     data: payload.data
   });
   if (global.io) {

@@ -63,7 +63,14 @@ async function recordSubscriptionPaymentSplit({
     pct
   );
 
-  const gateway = paymentMethod === "WALLET" ? "WALLET" : paymentMethod === "RAZORPAY" ? "RAZORPAY" : "STRIPE";
+  const gateway =
+    paymentMethod === "WALLET"
+      ? "WALLET"
+      : paymentMethod === "RAZORPAY"
+        ? "RAZORPAY"
+        : paymentMethod === "STRIPE"
+          ? "STRIPE"
+          : "SYSTEM";
 
   const platformEntry = await postLedgerEntry({
     ownerType: "PLATFORM",

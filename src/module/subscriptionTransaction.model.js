@@ -28,7 +28,7 @@ const subscriptionTransactionSchema = new mongoose.Schema(
     platformFeeAmount: { type: Number, default: 0 },
     paymentMethod: {
       type: String,
-      enum: ["WALLET", "RAZORPAY", "STRIPE"]
+      enum: ["WALLET", "ONLINE", "RAZORPAY", "STRIPE"]
     },
     paymentStatus: {
       type: String,

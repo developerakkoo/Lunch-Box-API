@@ -9,26 +9,37 @@ const {
 
 async function finalizePaidSubscription(subscription) {
   const plan = await SubscriptionPlan.findById(subscription.subscriptionPlanId);
-  const split = await recordSubscriptionPaymentSplit({
-    userId: subscription.userId,
-    partnerId: subscription.partnerId,
-    totalAmount: subscription.totalPrice,
-    userSubscriptionId: subscription._id,
-    paymentMethod: subscription.payment.method
-  });
-
-  subscription.platformFeeAmount = split.commissionAmount;
-  subscription.partnerNetAmount = split.partnerNetAmount;
-  if (subscription.status === "PENDING_PAYMENT") {
-    subscription.status = "ACTIVE";
+  if (!plan) {
+    throw new Error("Subscription plan not found");
   }
-  await subscription.save();
 
   const existingTxn = await SubscriptionTransaction.findOne({
     userSubscriptionId: subscription._id,
     type: "PURCHASE",
     paymentStatus: "PAID"
   });
+
+  let split = {
+    commissionAmount: subscription.platformFeeAmount ?? 0,
+    partnerNetAmount: subscription.partnerNetAmount ?? 0
+  };
+
+  if (!existingTxn) {
+    split = await recordSubscriptionPaymentSplit({
+      userId: subscription.userId,
+      partnerId: subscription.partnerId,
+      totalAmount: subscription.totalPrice,
+      userSubscriptionId: subscription._id,
+      paymentMethod: subscription.payment.method
+    });
+    subscription.platformFeeAmount = split.commissionAmount;
+    subscription.partnerNetAmount = split.partnerNetAmount;
+  }
+  if (subscription.status === "PENDING_PAYMENT") {
+    subscription.status = "ACTIVE";
+  }
+  await subscription.save();
+
   if (!existingTxn) {
     await SubscriptionTransaction.create({
       userSubscriptionId: subscription._id,

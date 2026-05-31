@@ -212,6 +212,7 @@ const partnerPlanController = require('../controller/partnerSubscriptionPlan.con
 router.get('/subscription-deliveries', auth, subDeliveryController.partnerListDeliveries);
 router.patch('/subscription-deliveries/:id/action', auth, subDeliveryController.partnerDeliveryAction);
 router.get('/subscriptions/plans', auth, partnerPlanController.listPlans);
+router.get('/subscriptions/plans/:id', auth, partnerPlanController.getPlanById);
 router.post('/subscriptions/plans', auth, partnerPlanController.createPlan);
 router.patch('/subscriptions/plans/:id', auth, partnerPlanController.updatePlan);
 router.delete('/subscriptions/plans/:id', auth, partnerPlanController.deletePlan);

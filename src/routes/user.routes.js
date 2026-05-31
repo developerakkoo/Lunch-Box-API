@@ -572,6 +572,16 @@ router.get(
   auth,
   subscriptionController.getSubscriptionTransactions
 );
+router.get(
+  "/subscriptions/:subscriptionId/pause-preview",
+  auth,
+  subscriptionController.getPausePreview
+);
+router.get(
+  "/subscriptions/:subscriptionId/cancel-preview",
+  auth,
+  subscriptionController.getCancelPreview
+);
 router.post(
   "/subscriptions/:subscriptionId/pause",
   auth,

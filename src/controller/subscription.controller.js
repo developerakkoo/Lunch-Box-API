@@ -17,8 +17,12 @@ const {
   skipDelivery,
   updateDeliveryAddress,
   cancelSubscription,
-  changePlan
+  changePlan,
+  previewPauseShift,
+  previewCancelRefund
 } = require("../services/subscriptionLifecycle.service");
+const { attachMealStatsToSubscriptions } = require("../services/subscriptionStats.service");
+const { isDateInPause } = require("../services/subscriptionSchedule.service");
 const { logAudit } = require("../services/subscriptionAudit.service");
 const {
   notifyUserSubscriptionEvent,
@@ -58,9 +62,11 @@ exports.getActiveSubscriptions = async (req, res) => {
       .populate("menuItemId", "name image")
       .sort({ createdAt: -1 });
 
+    const data = await attachMealStatsToSubscriptions(subscriptions);
+
     return res.status(200).json({
       message: "Active subscriptions fetched",
-      data: subscriptions
+      data
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -274,9 +280,10 @@ exports.confirmSubscriptionPayment = async (req, res) => {
     }
 
     if (subscription.payment?.paymentStatus === "PAID") {
+      const data = await finalizePaidSubscription(subscription);
       return res.status(200).json({
         message: "Subscription payment already confirmed",
-        data: subscription
+        data
       });
     }
 
@@ -351,7 +358,10 @@ exports.confirmSubscriptionPayment = async (req, res) => {
 
     return res.status(400).json({ message: "Invalid gateway" });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    const isValidation =
+      error?.name === "ValidationError" ||
+      /validation failed/i.test(String(error?.message ?? ""));
+    return res.status(isValidation ? 400 : 500).json({ message: error.message });
   }
 };
 
@@ -401,8 +411,16 @@ exports.updateSubscriptionAddress = async (req, res) => {
 
 exports.cancelSubscription = async (req, res) => {
   try {
-    const sub = await cancelSubscription(req.params.subscriptionId, req.user.id, req.body);
-    return res.status(200).json({ message: "Subscription cancelled", data: sub });
+    const result = await cancelSubscription(req.params.subscriptionId, req.user.id, req.body);
+    const data = result.subscription || result;
+    const refund = result.refund;
+    return res.status(200).json({
+      message: refund?.netRefund
+        ? `Subscription cancelled. ₹${refund.netRefund} added to your wallet.`
+        : "Subscription cancelled",
+      data,
+      refund
+    });
   } catch (error) {
     return res.status(400).json({ message: error.message });
   }
@@ -453,12 +471,49 @@ exports.downgradeSubscription = async (req, res) => {
 
 exports.getSubscriptionTransactions = async (req, res) => {
   try {
-    const txns = await SubscriptionTransaction.find({ userId: req.user.id })
+    const filter = { userId: req.user.id };
+    if (req.query.subscriptionId) {
+      filter.userSubscriptionId = req.query.subscriptionId;
+    }
+    const txns = await SubscriptionTransaction.find(filter)
       .sort({ createdAt: -1 })
       .limit(50);
     return res.status(200).json({ message: "Transactions fetched", data: txns });
   } catch (error) {
     return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getPausePreview = async (req, res) => {
+  try {
+    const sub = await UserSubscription.findOne({
+      _id: req.params.subscriptionId,
+      userId: req.user.id
+    });
+    if (!sub) return res.status(404).json({ message: "Subscription not found" });
+
+    const preview = await previewPauseShift(sub, {
+      start: req.query.start,
+      end: req.query.end
+    });
+    return res.status(200).json({ message: "Pause preview", data: preview });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
+
+exports.getCancelPreview = async (req, res) => {
+  try {
+    const sub = await UserSubscription.findOne({
+      _id: req.params.subscriptionId,
+      userId: req.user.id
+    });
+    if (!sub) return res.status(404).json({ message: "Subscription not found" });
+
+    const preview = await previewCancelRefund(sub);
+    return res.status(200).json({ message: "Cancel preview", data: preview });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
   }
 };
 
@@ -469,9 +524,11 @@ exports.getSubscriptionHistory = async (req, res) => {
       .populate("menuItemId", "name image")
       .sort({ createdAt: -1 });
 
+    const data = await attachMealStatsToSubscriptions(subscriptions);
+
     return res.status(200).json({
       message: "Subscription history fetched successfully",
-      data: subscriptions
+      data
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -484,7 +541,7 @@ exports.getUpcomingSubscriptionDeliveries = async (req, res) => {
     const subscriptions = await UserSubscription.find({
       userId: req.user.id,
       status: { $in: ["ACTIVE", "PAUSED"] }
-    }).select("_id");
+    }).select("_id pausePeriods status");
 
     const ids = subscriptions.map((s) => s._id);
 
@@ -502,9 +559,16 @@ exports.getUpcomingSubscriptionDeliveries = async (req, res) => {
       })
       .sort({ deliveryDate: 1 });
 
+    const filtered = deliveries.filter((d) => {
+      const sub = d.userSubscriptionId;
+      if (!sub) return false;
+      if (sub.status === "PAUSED") return false;
+      return !isDateInPause(sub, d.deliveryDate);
+    });
+
     return res.status(200).json({
       message: "Upcoming subscription deliveries fetched successfully",
-      data: deliveries
+      data: filtered
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });

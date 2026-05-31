@@ -6,6 +6,7 @@ const { getManagedHotelIds, resolveAccessibleHotel } = require("../utils/partner
 const {
   materializeOrderFromSubscriptionDelivery,
 } = require("../utils/subscriptionOrderBridge");
+const { isDateInPause } = require("../services/subscriptionSchedule.service");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -93,6 +94,11 @@ exports.partnerDeliveryAction = async (req, res) => {
     }
 
     const partnerId = delivery.userSubscriptionId?.partnerId;
+    const sub = delivery.userSubscriptionId;
+    if (sub?.status === "PAUSED" || isDateInPause(sub, delivery.deliveryDate)) {
+      return res.status(400).json({ message: "Subscription is paused for this delivery date" });
+    }
+
     const { hotelIds } = await getManagedHotelIds(req.partner?.id || req.user?.id);
     if (!hotelIds.includes(String(partnerId))) {
       return res.status(403).json({ message: "Access denied" });

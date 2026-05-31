@@ -65,5 +65,12 @@ const subscriptionPlanSchema = new mongoose.Schema(
 
 subscriptionPlanSchema.index({ partnerId: 1, isActive: 1 });
 subscriptionPlanSchema.index({ partnerId: 1, visibility: 1 });
+subscriptionPlanSchema.index(
+  { partnerId: 1, menuItemId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { isActive: true }
+  }
+);
 
 module.exports = mongoose.model("SubscriptionPlan", subscriptionPlanSchema);

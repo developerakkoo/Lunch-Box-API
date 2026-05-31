@@ -2,15 +2,20 @@ const User = require("../module/user.model");
 const UserSubscription = require("../module/userSubscription.model");
 const SubscriptionPlan = require("../module/subscriptionPlan.model");
 const SubscriptionDelivery = require("../module/subscriptionDelivery.model");
+const SubscriptionTransaction = require("../module/subscriptionTransaction.model");
 const {
   DAY_MS,
-  isDateInPause,
-  appendReplacementDelivery,
-  scheduleSubscriptionDeliveries
+  startOfDay,
+  shiftDeliveriesInPauseWindow
 } = require("./subscriptionSchedule.service");
 const { getPlatformSettings } = require("./subscriptionCommission.service");
 const { postLedgerEntry } = require("./walletLedger.service");
 const { logAudit } = require("./subscriptionAudit.service");
+const {
+  previewPauseShift,
+  previewCancelRefund,
+  REFUNDABLE_STATUSES
+} = require("./subscriptionStats.service");
 
 async function resolveAddress(userId, addressId) {
   const user = await User.findById(userId).select("addresses");
@@ -37,6 +42,12 @@ async function resolveAddress(userId, addressId) {
   };
 }
 
+function countPauseDays(pauseStart, pauseEnd) {
+  const start = startOfDay(pauseStart);
+  const end = startOfDay(pauseEnd);
+  return Math.max(1, Math.ceil((end.getTime() - start.getTime()) / DAY_MS) + 1);
+}
+
 async function pauseSubscription(subscriptionId, userId, { start, end, reason }) {
   const sub = await UserSubscription.findOne({ _id: subscriptionId, userId });
   if (!sub) throw new Error("Subscription not found");
@@ -47,6 +58,7 @@ async function pauseSubscription(subscriptionId, userId, { start, end, reason })
   const pauseStart = start ? new Date(start) : new Date();
   const pauseEnd = end ? new Date(end) : null;
   if (Number.isNaN(pauseStart.getTime())) throw new Error("Invalid pause start");
+  if (!pauseEnd) throw new Error("Pause end date is required");
 
   const settings = await getPlatformSettings();
   const plan = await SubscriptionPlan.findById(sub.subscriptionPlanId);
@@ -56,19 +68,17 @@ async function pauseSubscription(subscriptionId, userId, { start, end, reason })
     if (!p.end) return acc + 1;
     return acc + Math.ceil((p.end - p.start) / DAY_MS);
   }, 0);
-  const newDays = pauseEnd
-    ? Math.ceil((pauseEnd - pauseStart) / DAY_MS)
-    : 1;
+  const newDays = countPauseDays(pauseStart, pauseEnd);
   if (existingDays + newDays > maxPause) {
     throw new Error(`Maximum pause days (${maxPause}) exceeded`);
   }
 
+  const { shiftedCount, newEndDate } = await shiftDeliveriesInPauseWindow(sub, pauseStart, pauseEnd);
+
   sub.pausePeriods = sub.pausePeriods || [];
   sub.pausePeriods.push({ start: pauseStart, end: pauseEnd, reason });
   sub.status = "PAUSED";
-  if (pauseEnd) {
-    sub.endDate = new Date(sub.endDate.getTime() + (pauseEnd - pauseStart));
-  }
+  sub.endDate = newEndDate;
   await sub.save();
 
   await logAudit({
@@ -77,7 +87,12 @@ async function pauseSubscription(subscriptionId, userId, { start, end, reason })
     action: "PAUSE",
     actorType: "USER",
     actorId: userId,
-    after: { pausePeriods: sub.pausePeriods, status: sub.status }
+    after: {
+      pausePeriods: sub.pausePeriods,
+      status: sub.status,
+      shiftedMeals: shiftedCount,
+      endDate: sub.endDate
+    }
   });
 
   return sub;
@@ -141,6 +156,7 @@ async function skipDelivery(subscriptionId, userId, deliveryId) {
   sub.skippedMealCount = (sub.skippedMealCount || 0) + 1;
   sub.mealCredits = (sub.mealCredits || 0) + 1;
   await sub.save();
+  const { appendReplacementDelivery } = require("./subscriptionSchedule.service");
   await appendReplacementDelivery(sub, plan);
 
   await logAudit({
@@ -173,13 +189,75 @@ async function cancelSubscription(subscriptionId, userId, { reason } = {}) {
     throw new Error("Subscription already ended");
   }
 
+  const existingRefund = await SubscriptionTransaction.findOne({
+    userSubscriptionId: sub._id,
+    type: "REFUND"
+  });
+  if (existingRefund) {
+    sub.status = "CANCELLED";
+    await sub.save();
+    return sub;
+  }
+
+  const preview = await previewCancelRefund(sub);
+  const ledgerEntryIds = [];
+
+  if (preview.netRefund > 0) {
+    const ledger = await postLedgerEntry({
+      ownerType: "USER",
+      ownerId: userId,
+      type: "CREDIT",
+      source: "SUBSCRIPTION_REFUND",
+      amount: preview.netRefund,
+      referenceType: "UserSubscription",
+      referenceId: sub._id,
+      notes: `Subscription cancellation refund (${preview.eligibleMeals} meals)`
+    });
+    ledgerEntryIds.push(ledger._id);
+  }
+
+  if (preview.cancellationFee > 0) {
+    await SubscriptionTransaction.create({
+      userSubscriptionId: sub._id,
+      userId,
+      partnerId: sub.partnerId,
+      type: "CANCELLATION_FEE",
+      amount: preview.cancellationFee,
+      paymentStatus: "PAID",
+      paymentMethod: sub.payment?.method
+    });
+  }
+
+  if (preview.netRefund > 0 || preview.eligibleMeals > 0) {
+    await SubscriptionTransaction.create({
+      userSubscriptionId: sub._id,
+      userId,
+      partnerId: sub.partnerId,
+      type: "REFUND",
+      amount: preview.netRefund,
+      paymentStatus: "REFUNDED",
+      paymentMethod: sub.payment?.method,
+      ledgerEntryIds,
+      gstDetails: {
+        eligibleMeals: preview.eligibleMeals,
+        grossRefund: preview.grossRefund,
+        cancellationFee: preview.cancellationFee,
+        netRefund: preview.netRefund
+      }
+    });
+  }
+
   sub.status = "CANCELLED";
+  if (preview.netRefund > 0) {
+    sub.payment = sub.payment || {};
+    sub.payment.paymentStatus = "REFUNDED";
+  }
   await sub.save();
 
   await SubscriptionDelivery.updateMany(
     {
       userSubscriptionId: sub._id,
-      status: { $in: ["PENDING", "PENDING_PARTNER"] }
+      status: { $in: REFUNDABLE_STATUSES }
     },
     { $set: { status: "CANCELLED" } }
   );
@@ -190,10 +268,13 @@ async function cancelSubscription(subscriptionId, userId, { reason } = {}) {
     action: "CANCEL",
     actorType: "USER",
     actorId: userId,
-    metadata: { reason }
+    metadata: {
+      reason,
+      refund: preview
+    }
   });
 
-  return sub;
+  return { subscription: sub, refund: preview };
 }
 
 async function changePlan(subscriptionId, userId, newPlanId, { direction = "upgrade" } = {}) {
@@ -243,5 +324,7 @@ module.exports = {
   skipDelivery,
   updateDeliveryAddress,
   cancelSubscription,
-  changePlan
+  changePlan,
+  previewPauseShift,
+  previewCancelRefund
 };
