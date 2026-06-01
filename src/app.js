@@ -23,7 +23,16 @@ app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 app.use(morgan("dev"));
 app.use(helmet());
 app.use(compression());
-app.use("/uploads", express.static(path.resolve(uploadsDir)));
+app.use(
+  "/uploads",
+  express.static(path.resolve(uploadsDir), {
+    setHeaders: (res) => {
+      // Allow admin.techlapse.co.in to embed public image assets from this API host.
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    }
+  })
+);
 
 /* -------------------------------------------------------------------------- */
 /*                                  SWAGGER                                   */

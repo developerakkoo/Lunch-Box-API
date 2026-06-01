@@ -1,4 +1,9 @@
-const cron = require("node-cron");
+let cron;
+try {
+  cron = require("node-cron");
+} catch (err) {
+  cron = null;
+}
 const {
   activateDueDeliveries,
   getTomorrowDemandByPartner
@@ -9,6 +14,11 @@ const { notifyPartnerSubscription } = require("../services/subscriptionNotificat
 const logger = require("../utils/logger");
 
 function initSubscriptionSchedulers() {
+  if (!cron) {
+    logger.warn("node-cron is not installed; subscription schedulers will not run");
+    return;
+  }
+
   if (process.env.SUBSCRIPTION_SCHEDULER_ENABLED === "false") {
     logger.warn("Subscription schedulers disabled");
     return;
