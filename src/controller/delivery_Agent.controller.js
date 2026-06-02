@@ -21,6 +21,7 @@ const {
   setDriverPresence
 } = require("../utils/orderEvents");
 const { getUploadedFileName, normalizeStoredAssetPath } = require("../utils/media");
+const { saveBase64Proof } = require("../utils/proofUpload.util");
 const { transitionOrder } = require("../services/orderTransition.service");
 const {
   markSubscriptionDeliveryDeliveredFromOrder,
@@ -569,15 +570,19 @@ exports.pickOrder = async (req, res) => {
 
 exports.completeOrder = async (req, res) => {
   const debugId = req.completeOrderDebugId;
+  const contentType = req.headers["content-type"] || "";
+  const uploadMode = contentType.includes("application/json") ? "json" : "multipart";
   try {
     const { orderId } = req.params;
     const agent = req.deliveryAgent;
     logger.info("Driver complete order request", {
       debugId,
+      uploadMode,
       orderId,
       driverId: getDriverIdFromReq(req),
-      contentType: req.headers["content-type"],
+      contentType,
       hasFiles: Boolean(req.files),
+      hasProofBase64: Boolean(req.body?.proofBase64),
       fileFieldNames: req.files && !Array.isArray(req.files) ? Object.keys(req.files) : []
     });
 
@@ -604,13 +609,34 @@ exports.completeOrder = async (req, res) => {
       return res.status(400).json({ message: "Only out for delivery orders can be completed", debugId });
     }
 
-    const { getUploadedFileName } = require("../utils/media");
-    const proofFile = getUploadedFileName(getUploadedProofFile(req));
+    let proofFile = "";
+    if (uploadMode === "json") {
+      try {
+        proofFile = saveBase64Proof(req.body?.proofBase64, req.body?.proofMimeType);
+      } catch (uploadErr) {
+        logger.warn("Driver complete order: invalid base64 proof", {
+          debugId,
+          orderId,
+          message: uploadErr.message
+        });
+        return res.status(uploadErr.statusCode || 400).json({
+          message: uploadErr.message,
+          code: uploadErr.code || "INVALID_PROOF_FILE",
+          debugId
+        });
+      }
+    } else {
+      proofFile = getUploadedFileName(getUploadedProofFile(req));
+    }
+
     if (!proofFile) {
-      logger.warn("Driver complete order: proof missing", { debugId, orderId });
+      logger.warn("Driver complete order: proof missing", { debugId, orderId, uploadMode });
       return res.status(400).json({
         message: "Delivery proof photo is required",
-        details: "Send an image using one of these form fields: proof, deliveryProof, delivery_proof, image, photo",
+        details:
+          uploadMode === "json"
+            ? "Send proofBase64 and optional proofMimeType in JSON body"
+            : "Send an image using one of these form fields: proof, deliveryProof, delivery_proof, image, photo",
         debugId
       });
     }
@@ -663,6 +689,7 @@ exports.completeOrder = async (req, res) => {
 
     logger.info("Driver complete order success", {
       debugId,
+      uploadMode,
       orderId,
       newStatus: "DELIVERED",
       proofFile

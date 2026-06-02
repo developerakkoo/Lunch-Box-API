@@ -280,14 +280,21 @@ const proofUpload = upload.fields([
   { name: "photo", maxCount: 1 }
 ]);
 
+function maybeProofUpload(req, res, next) {
+  const contentType = req.headers["content-type"] || "";
+  if (contentType.includes("application/json")) {
+    return next();
+  }
+  return proofUpload(req, res, (err) => handleUploadError(err, req, res, next));
+}
+
 const completeOrderHandlers = [
   logCompleteOrderEntry,
   driverAuth,
   attachDeliveryAgent,
   logCompleteOrderAfterAuth,
   requireApprovedDriver,
-  proofUpload,
-  handleUploadError,
+  maybeProofUpload,
   logCompleteOrderAfterUpload,
   controller.completeOrder
 ];

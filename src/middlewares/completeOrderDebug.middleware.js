@@ -52,6 +52,16 @@ function logCompleteOrderAfterAuth(req, res, next) {
 
 /** After multer — logs whether proof file was parsed. */
 function logCompleteOrderAfterUpload(req, res, next) {
+  const contentType = req.headers["content-type"] || "";
+  if (contentType.includes("application/json")) {
+    logger.info("Complete order pipeline: json body mode", {
+      debugId: req.completeOrderDebugId,
+      hasProofBase64: Boolean(req.body?.proofBase64),
+      proofMimeType: req.body?.proofMimeType
+    });
+    return next();
+  }
+
   const proof = extractProofFile(req);
   const files = req.files;
   const fileFieldNames =
