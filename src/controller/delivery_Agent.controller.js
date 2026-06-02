@@ -569,9 +569,15 @@ exports.pickOrder = async (req, res) => {
 
 exports.completeOrder = async (req, res) => {
   try {
-    logger.info("Driver complete order request", { orderId: req.params.orderId, driverId: getDriverIdFromReq(req) });
     const { orderId } = req.params;
     const agent = req.deliveryAgent;
+    logger.info("Driver complete order request", {
+      orderId,
+      driverId: getDriverIdFromReq(req),
+      contentType: req.headers["content-type"],
+      hasFiles: Boolean(req.files),
+      fileFieldNames: req.files && !Array.isArray(req.files) ? Object.keys(req.files) : []
+    });
 
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: "Order not found" });

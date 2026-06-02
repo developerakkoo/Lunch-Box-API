@@ -3,7 +3,7 @@ const controller = require("../controller/delivery_Agent.controller");
 const driverAuth = require("../middlewares/driverAuth.middleware");
 const attachDeliveryAgent = require("../middlewares/attachDeliveryAgent.middleware");
 const requireApprovedDriver = require("../middlewares/requireApprovedDriver.middleware");
-const { upload } = require("../middlewares/upload.middleware");
+const { upload, handleUploadError } = require("../middlewares/upload.middleware");
 
 /**
  * @swagger
@@ -267,6 +267,23 @@ router.put("/reject-order/:orderId", driverAuth, attachDeliveryAgent, requireApp
  */
 router.put("/pick-order/:orderId", driverAuth, attachDeliveryAgent, requireApprovedDriver, controller.pickOrder);
 
+const proofUpload = upload.fields([
+  { name: "proof", maxCount: 1 },
+  { name: "deliveryProof", maxCount: 1 },
+  { name: "delivery_proof", maxCount: 1 },
+  { name: "image", maxCount: 1 },
+  { name: "photo", maxCount: 1 }
+]);
+
+const completeOrderHandlers = [
+  driverAuth,
+  attachDeliveryAgent,
+  requireApprovedDriver,
+  proofUpload,
+  handleUploadError,
+  controller.completeOrder
+];
+
 /**
  * @swagger
  * /api/delivery/complete-order/{orderId}:
@@ -285,20 +302,18 @@ router.put("/pick-order/:orderId", driverAuth, attachDeliveryAgent, requireAppro
  *       200:
  *         description: Order completed successfully
  */
-router.put(
-  "/complete-order/:orderId",
-  driverAuth,
-  attachDeliveryAgent,
-  requireApprovedDriver,
-  upload.fields([
-    { name: "proof", maxCount: 1 },
-    { name: "deliveryProof", maxCount: 1 },
-    { name: "delivery_proof", maxCount: 1 },
-    { name: "image", maxCount: 1 },
-    { name: "photo", maxCount: 1 },
-  ]),
-  controller.completeOrder
-);
+router.put("/complete-order/:orderId", ...completeOrderHandlers);
+
+/**
+ * @swagger
+ * /api/delivery/complete-order/{orderId}:
+ *   post:
+ *     summary: Driver complete order (multipart, preferred on mobile)
+ *     tags: [Driver]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post("/complete-order/:orderId", ...completeOrderHandlers);
 
 /**
  * @swagger
