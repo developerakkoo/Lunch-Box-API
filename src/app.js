@@ -7,6 +7,7 @@ const path = require("path");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
 const { uploadsDir } = require("./middlewares/upload.middleware");
+const logger = require("./utils/logger");
 
 const app = express();
 
@@ -138,7 +139,13 @@ app.use((req, res) => {
 
 
 app.use((err, req, res, next) => {
-  console.error(err);
+  logger.error("Unhandled request error", {
+    path: req.originalUrl || req.path,
+    method: req.method,
+    message: err.message,
+    stack: err.stack,
+    debugId: req.completeOrderDebugId
+  });
 
   if (err.type === "entity.too.large") {
     return res.status(413).json({
@@ -146,8 +153,9 @@ app.use((err, req, res, next) => {
     });
   }
 
-  res.status(err.status || 500).json({
-    message: err.message || "Internal Server Error"
+  res.status(err.status || err.statusCode || 500).json({
+    message: err.message || "Internal Server Error",
+    debugId: req.completeOrderDebugId
   });
 });
 

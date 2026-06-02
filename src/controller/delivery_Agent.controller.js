@@ -568,10 +568,12 @@ exports.pickOrder = async (req, res) => {
 };
 
 exports.completeOrder = async (req, res) => {
+  const debugId = req.completeOrderDebugId;
   try {
     const { orderId } = req.params;
     const agent = req.deliveryAgent;
     logger.info("Driver complete order request", {
+      debugId,
       orderId,
       driverId: getDriverIdFromReq(req),
       contentType: req.headers["content-type"],
@@ -580,20 +582,36 @@ exports.completeOrder = async (req, res) => {
     });
 
     const order = await Order.findById(orderId);
-    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (!order) {
+      logger.warn("Driver complete order: order not found", { debugId, orderId });
+      return res.status(404).json({ message: "Order not found", debugId });
+    }
     if (!order.deliveryAgent || String(order.deliveryAgent) !== String(agent._id)) {
-      return res.status(403).json({ message: "Order is not assigned to this delivery agent" });
+      logger.warn("Driver complete order: assignment mismatch", {
+        debugId,
+        orderId,
+        orderAgentId: order.deliveryAgent?.toString(),
+        requestAgentId: agent._id?.toString()
+      });
+      return res.status(403).json({ message: "Order is not assigned to this delivery agent", debugId });
     }
     if (order.status !== "OUT_FOR_DELIVERY") {
-      return res.status(400).json({ message: "Only out for delivery orders can be completed" });
+      logger.warn("Driver complete order: invalid status", {
+        debugId,
+        orderId,
+        status: order.status
+      });
+      return res.status(400).json({ message: "Only out for delivery orders can be completed", debugId });
     }
 
     const { getUploadedFileName } = require("../utils/media");
     const proofFile = getUploadedFileName(getUploadedProofFile(req));
     if (!proofFile) {
+      logger.warn("Driver complete order: proof missing", { debugId, orderId });
       return res.status(400).json({
         message: "Delivery proof photo is required",
         details: "Send an image using one of these form fields: proof, deliveryProof, delivery_proof, image, photo",
+        debugId
       });
     }
 
@@ -643,13 +661,32 @@ exports.completeOrder = async (req, res) => {
 
     emitOrderDelivered(order);
 
+    logger.info("Driver complete order success", {
+      debugId,
+      orderId,
+      newStatus: "DELIVERED",
+      proofFile
+    });
+
     return res.status(200).json({
       message: "Order completed successfully",
-      data: order
+      data: order,
+      debugId
     });
   } catch (error) {
-    logger.error("Driver complete order failed", { message: error.message });
-    return res.status(500).json({ message: error.message });
+    const status = error.statusCode || error.status || 500;
+    logger.error("Driver complete order failed", {
+      debugId,
+      orderId: req.params?.orderId,
+      message: error.message,
+      code: error.code,
+      stack: error.stack
+    });
+    return res.status(status).json({
+      message: error.message,
+      code: error.code,
+      debugId
+    });
   }
 };
 

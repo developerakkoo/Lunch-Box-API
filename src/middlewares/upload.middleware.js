@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const multer = require("multer");
+const logger = require("../utils/logger");
 
 const uploadsDir = path.join(__dirname, "..", "..", "uploads");
 fs.mkdirSync(uploadsDir, { recursive: true });
@@ -53,24 +54,34 @@ const upload = multer({
 function handleUploadError(err, req, res, next) {
   if (!err) return next();
 
+  logger.error("Complete order upload rejected", {
+    debugId: req.completeOrderDebugId,
+    code: err.code,
+    message: err.message,
+    contentType: req.headers["content-type"]
+  });
+
   if (err.code === "LIMIT_FILE_SIZE") {
     return res.status(400).json({
       message: "Image too large (max 10MB)",
-      code: "INVALID_PROOF_FILE"
+      code: "INVALID_PROOF_FILE",
+      debugId: req.completeOrderDebugId
     });
   }
 
   if (err.code === "INVALID_PROOF_FILE" || err.message === "Only image files are allowed") {
     return res.status(400).json({
       message: err.message,
-      code: "INVALID_PROOF_FILE"
+      code: "INVALID_PROOF_FILE",
+      debugId: req.completeOrderDebugId
     });
   }
 
   if (err instanceof multer.MulterError) {
     return res.status(400).json({
       message: err.message,
-      code: "INVALID_PROOF_FILE"
+      code: "INVALID_PROOF_FILE",
+      debugId: req.completeOrderDebugId
     });
   }
 

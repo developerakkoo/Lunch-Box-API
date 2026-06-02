@@ -4,6 +4,11 @@ const driverAuth = require("../middlewares/driverAuth.middleware");
 const attachDeliveryAgent = require("../middlewares/attachDeliveryAgent.middleware");
 const requireApprovedDriver = require("../middlewares/requireApprovedDriver.middleware");
 const { upload, handleUploadError } = require("../middlewares/upload.middleware");
+const {
+  logCompleteOrderEntry,
+  logCompleteOrderAfterAuth,
+  logCompleteOrderAfterUpload
+} = require("../middlewares/completeOrderDebug.middleware");
 
 /**
  * @swagger
@@ -276,11 +281,14 @@ const proofUpload = upload.fields([
 ]);
 
 const completeOrderHandlers = [
+  logCompleteOrderEntry,
   driverAuth,
   attachDeliveryAgent,
+  logCompleteOrderAfterAuth,
   requireApprovedDriver,
   proofUpload,
   handleUploadError,
+  logCompleteOrderAfterUpload,
   controller.completeOrder
 ];
 
