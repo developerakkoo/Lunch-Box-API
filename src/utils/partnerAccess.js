@@ -3,6 +3,9 @@ const Partner = require("../module/partner.model");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
+const SAFE_PARTNER_PROJECTION =
+  "_id ownerPartner kitchenName ownerName email phone address latitude longitude isActive status approvalStatus rejectionReason reviewedAt reviewedBy gstApplicable documents createdAt updatedAt";
+
 const getOwnerPartnerId = async (actorPartnerId) => {
   if (!isValidObjectId(actorPartnerId)) return null;
 
@@ -24,7 +27,9 @@ const getManagedHotels = async (actorPartnerId) => {
 
   const hotels = await Partner.find({
     $or: [{ _id: ownerPartnerId }, { ownerPartner: ownerPartnerId }]
-  }).sort({ createdAt: 1 });
+  })
+    .select(SAFE_PARTNER_PROJECTION)
+    .sort({ createdAt: 1 });
 
   return {
     ownerPartnerId,

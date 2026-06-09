@@ -6,8 +6,24 @@ const Partner = require("../../module/partner.model");
 const Category = require("../../module/category.model");
 const MenuItem = require("../../module/menuItem.model");
 const Order = require("../../module/order.model");
+const { notifyPartner } = require("../../utils/partnerNotification");
+const {
+  PARTNER_APPROVAL_STATUS,
+  normalizeApprovalStatus
+} = require("../../utils/partnerApproval");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
+
+const buildDocumentSummary = (documents = {}) => ({
+  panCard: Boolean(documents.panCard?.url),
+  gstCertificate: Boolean(documents.gstCertificate?.url),
+  fssaiLicense: Boolean(documents.fssaiLicense?.url)
+});
+
+const requireApprovalReason = (reason) => {
+  const trimmed = String(reason || "").trim();
+  return trimmed.length >= 10 ? trimmed : null;
+};
 
 exports.registerAdmin = async (req, res) => {
   try {
@@ -73,6 +89,7 @@ exports.getAllKitchens = async (req, res) => {
       status,
       isActive,
       ownerPartner,
+      approvalStatus,
       page = 1,
       limit = 20
     } = req.query;
@@ -87,6 +104,10 @@ exports.getAllKitchens = async (req, res) => {
 
     if (isActive !== undefined) {
       query.isActive = String(isActive) === "true";
+    }
+
+    if (approvalStatus && ["PENDING", "APPROVED", "REJECTED"].includes(String(approvalStatus).toUpperCase())) {
+      query.approvalStatus = String(approvalStatus).toUpperCase();
     }
 
     if (ownerPartner === "ROOT") {
@@ -108,11 +129,21 @@ exports.getAllKitchens = async (req, res) => {
     const [kitchens, total] = await Promise.all([
       Partner.find(query)
         .populate("ownerPartner", "kitchenName ownerName email phone")
+        .select("ownerPartner kitchenName ownerName email phone address latitude longitude isActive status approvalStatus rejectionReason reviewedAt reviewedBy gstApplicable documents createdAt updatedAt")
         .sort({ createdAt: -1 })
         .skip((pageNumber - 1) * limitNumber)
         .limit(limitNumber),
       Partner.countDocuments(query)
     ]);
+
+    const data = kitchens.map((kitchen) => {
+      const plain = kitchen.toObject ? kitchen.toObject() : kitchen;
+      return {
+        ...plain,
+        approvalStatus: normalizeApprovalStatus(plain.approvalStatus),
+        documents: buildDocumentSummary(plain.documents)
+      };
+    });
 
     return res.status(200).json({
       message: "Kitchens fetched successfully",
@@ -121,7 +152,7 @@ exports.getAllKitchens = async (req, res) => {
         limit: limitNumber,
         total
       },
-      data: kitchens
+      data
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -136,10 +167,12 @@ exports.getKitchenDetails = async (req, res) => {
       return res.status(400).json({ message: "Invalid kitchen id" });
     }
 
-    const kitchen = await Partner.findById(id).populate(
+    const kitchen = await Partner.findById(id)
+      .select("-password")
+      .populate(
       "ownerPartner",
       "kitchenName ownerName email phone"
-    );
+    ).populate("reviewedBy", "name email");
 
     if (!kitchen) {
       return res.status(404).json({ message: "Kitchen not found" });
@@ -168,6 +201,13 @@ exports.getKitchenDetails = async (req, res) => {
       message: "Kitchen details fetched successfully",
       data: {
         kitchen,
+        approval: {
+          approvalStatus: normalizeApprovalStatus(kitchen.approvalStatus),
+          rejectionReason: kitchen.rejectionReason || "",
+          reviewedAt: kitchen.reviewedAt || null,
+          reviewedBy: kitchen.reviewedBy || null
+        },
+        documents: kitchen.documents || {},
         stats: {
           totalCategories,
           totalMenuItems,
@@ -192,7 +232,7 @@ exports.updateKitchenStatus = async (req, res) => {
       return res.status(400).json({ message: "Invalid kitchen id" });
     }
 
-    const kitchen = await Partner.findById(id);
+    const kitchen = await Partner.findById(id).select("-password");
 
     if (!kitchen) {
       return res.status(404).json({ message: "Kitchen not found" });
@@ -202,20 +242,131 @@ exports.updateKitchenStatus = async (req, res) => {
       if (!["ACTIVE", "INACTIVE"].includes(status)) {
         return res.status(400).json({ message: "status must be ACTIVE or INACTIVE" });
       }
+      if (status === "ACTIVE" && normalizeApprovalStatus(kitchen.approvalStatus) !== PARTNER_APPROVAL_STATUS.APPROVED) {
+        return res.status(409).json({ message: "Only approved partners can be activated" });
+      }
       kitchen.status = status;
       kitchen.isActive = status === "ACTIVE";
     } else if (isActive !== undefined) {
       kitchen.isActive = Boolean(isActive);
       kitchen.status = kitchen.isActive ? "ACTIVE" : "INACTIVE";
+      if (kitchen.isActive && normalizeApprovalStatus(kitchen.approvalStatus) !== PARTNER_APPROVAL_STATUS.APPROVED) {
+        return res.status(409).json({ message: "Only approved partners can be activated" });
+      }
     } else {
       kitchen.isActive = !kitchen.isActive;
       kitchen.status = kitchen.isActive ? "ACTIVE" : "INACTIVE";
+      if (kitchen.isActive && normalizeApprovalStatus(kitchen.approvalStatus) !== PARTNER_APPROVAL_STATUS.APPROVED) {
+        return res.status(409).json({ message: "Only approved partners can be activated" });
+      }
     }
 
     await kitchen.save();
 
     return res.status(200).json({
       message: "Kitchen status updated successfully",
+      data: kitchen
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.approveKitchen = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ message: "Invalid kitchen id" });
+    }
+
+    const kitchen = await Partner.findById(id).select("-password");
+    if (!kitchen) {
+      return res.status(404).json({ message: "Kitchen not found" });
+    }
+
+    if (normalizeApprovalStatus(kitchen.approvalStatus) === PARTNER_APPROVAL_STATUS.APPROVED) {
+      return res.status(409).json({ message: "Kitchen is already approved" });
+    }
+
+    kitchen.approvalStatus = PARTNER_APPROVAL_STATUS.APPROVED;
+    kitchen.rejectionReason = "";
+    kitchen.reviewedAt = new Date();
+    kitchen.reviewedBy = req.admin?.id || null;
+    kitchen.isActive = true;
+    kitchen.status = "ACTIVE";
+
+    await kitchen.save();
+
+    try {
+      await notifyPartner({
+        partnerId: kitchen._id,
+        type: "ACCOUNT_APPROVED",
+        title: "Partner approved",
+        message: "Your partner registration has been approved. You can now log in.",
+        data: {
+          approvalStatus: PARTNER_APPROVAL_STATUS.APPROVED
+        }
+      });
+    } catch (notifyError) {
+      logger.warn("Partner approval notification failed", { message: notifyError.message, partnerId: kitchen._id });
+    }
+
+    return res.status(200).json({
+      message: "Kitchen approved successfully",
+      data: kitchen
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.rejectKitchen = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const rejectionReason = requireApprovalReason(req.body?.reason);
+
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ message: "Invalid kitchen id" });
+    }
+
+    if (!rejectionReason) {
+      return res.status(400).json({
+        message: "Rejection reason is required and must be at least 10 characters"
+      });
+    }
+
+    const kitchen = await Partner.findById(id);
+    if (!kitchen) {
+      return res.status(404).json({ message: "Kitchen not found" });
+    }
+
+    kitchen.approvalStatus = PARTNER_APPROVAL_STATUS.REJECTED;
+    kitchen.rejectionReason = rejectionReason;
+    kitchen.reviewedAt = new Date();
+    kitchen.reviewedBy = req.admin?.id || null;
+    kitchen.isActive = false;
+    kitchen.status = "INACTIVE";
+
+    await kitchen.save();
+
+    try {
+      await notifyPartner({
+        partnerId: kitchen._id,
+        type: "ACCOUNT_REJECTED",
+        title: "Partner registration rejected",
+        message: rejectionReason,
+        data: {
+          approvalStatus: PARTNER_APPROVAL_STATUS.REJECTED,
+          rejectionReason
+        }
+      });
+    } catch (notifyError) {
+      logger.warn("Partner rejection notification failed", { message: notifyError.message, partnerId: kitchen._id });
+    }
+
+    return res.status(200).json({
+      message: "Kitchen rejected successfully",
       data: kitchen
     });
   } catch (error) {

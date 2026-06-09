@@ -9,6 +9,12 @@ const Order = require("../module/order.model");
 const UserSubscription = require("../module/userSubscription.model");
 const SubscriptionDelivery = require("../module/subscriptionDelivery.model");
 const PartnerNotification = require("../module/partnerNotification.model");
+const { deleteUploadedFile } = require("../utils/fileStorage");
+const { notifyPartner } = require("../utils/partnerNotification");
+const {
+  PARTNER_APPROVAL_STATUS,
+  getApprovalGate
+} = require("../utils/partnerApproval");
 const {
   getManagedHotels: fetchManagedHotels,
   getManagedHotelIds,
@@ -44,6 +50,54 @@ const generateToken = (partner) => {
   );
 };
 
+const PARTNER_DOCUMENT_FIELDS = ["panCard", "gstCertificate", "fssaiLicense"];
+
+const toBoolean = (value) => {
+  if (typeof value === "boolean") return value;
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0" || value == null) return false;
+  return Boolean(value);
+};
+
+const parseOptionalNumber = (value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeText = (value) => {
+  if (typeof value !== "string") return "";
+  return value.trim();
+};
+
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildDocumentMeta = (file) => ({
+  url: `/uploads/partner-documents/${file.filename}`,
+  originalName: file.originalname || "",
+  mimeType: file.mimetype || "",
+  size: file.size || 0,
+  uploadedAt: new Date()
+});
+
+const cleanupPartnerDocumentFiles = (files) => {
+  if (!files) return;
+  for (const file of files) {
+    deleteUploadedFile(file?.filename || file?.path || file?.url);
+  }
+};
+
+const getUploadedPartnerFiles = (req) => {
+  const files = [];
+  for (const field of PARTNER_DOCUMENT_FIELDS) {
+    const fieldFiles = req.files?.[field] || [];
+    for (const file of fieldFiles) {
+      files.push({ ...file, fieldName: field });
+    }
+  }
+  return files;
+};
+
 
 
 /* ================= REGISTER PARTNER ================= */
@@ -52,29 +106,122 @@ exports.registerPartner = async (req, res) => {
   try {
     logger.info("Partner register request received", { email: req.body?.email });
 
-    const { kitchenName, ownerName, email, password } = req.body;
+    const {
+      kitchenName,
+      ownerName,
+      email,
+      password,
+      phone,
+      address,
+      latitude,
+      longitude,
+      gstApplicable
+    } = req.body || {};
 
-    const existing = await Partner.findOne({ email });
+    const normalizedEmail = normalizeText(email).toLowerCase();
+    const normalizedKitchenName = normalizeText(kitchenName);
+    const normalizedOwnerName = normalizeText(ownerName);
+    const normalizedPhone = normalizeText(phone);
+    const normalizedAddress = normalizeText(address);
+    const resolvedGstApplicable = toBoolean(gstApplicable);
+    const parsedLatitude = parseOptionalNumber(latitude);
+    const parsedLongitude = parseOptionalNumber(longitude);
+    const uploadedFiles = getUploadedPartnerFiles(req);
+    const fileMap = new Map(uploadedFiles.map((file) => [file.fieldName, file]));
+
+    const panCardFile = fileMap.get("panCard");
+    const gstCertificateFile = fileMap.get("gstCertificate");
+    const fssaiLicenseFile = fileMap.get("fssaiLicense");
+
+    if (!normalizedKitchenName || !normalizedOwnerName || !normalizedEmail || !password) {
+      cleanupPartnerDocumentFiles(uploadedFiles);
+      return res.status(400).json({
+        message: "kitchenName, ownerName, email and password are required"
+      });
+    }
+
+    if (parsedLatitude === null || parsedLongitude === null) {
+      cleanupPartnerDocumentFiles(uploadedFiles);
+      return res.status(400).json({
+        message: "latitude and longitude must be valid numbers when provided"
+      });
+    }
+
+    if (!panCardFile || !fssaiLicenseFile) {
+      cleanupPartnerDocumentFiles(uploadedFiles);
+      return res.status(400).json({
+        message: "PAN Card and FSSAI License are required"
+      });
+    }
+
+    if (resolvedGstApplicable && !gstCertificateFile) {
+      cleanupPartnerDocumentFiles(uploadedFiles);
+      return res.status(400).json({
+        message: "GST Certificate is required when gstApplicable is true"
+      });
+    }
+
+    const existing = await Partner.findOne({
+      email: new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i")
+    });
     if (existing) {
+      cleanupPartnerDocumentFiles(uploadedFiles);
       return res.status(400).json({
         message: "Email already registered"
       });
     }
 
+    const documents = {
+      panCard: buildDocumentMeta(panCardFile),
+      fssaiLicense: buildDocumentMeta(fssaiLicenseFile)
+    };
+
+    if (gstCertificateFile) {
+      documents.gstCertificate = buildDocumentMeta(gstCertificateFile);
+    }
+
     const partner = await Partner.create({
-      kitchenName,
-      ownerName,
-      email,
-      password
+      kitchenName: normalizedKitchenName,
+      ownerName: normalizedOwnerName,
+      email: normalizedEmail,
+      password,
+      phone: normalizedPhone || undefined,
+      address: normalizedAddress || undefined,
+      latitude: parsedLatitude,
+      longitude: parsedLongitude,
+      gstApplicable: resolvedGstApplicable,
+      documents,
+      approvalStatus: PARTNER_APPROVAL_STATUS.PENDING,
+      status: "INACTIVE",
+      isActive: false
     });
+
+    try {
+      await notifyPartner({
+        partnerId: partner._id,
+        type: "REGISTRATION_RECEIVED",
+        title: "Registration received",
+        message: "Your partner registration has been received and is awaiting admin approval.",
+        data: {
+          approvalStatus: PARTNER_APPROVAL_STATUS.PENDING
+        }
+      });
+    } catch (notifyError) {
+      logger.warn("Partner registration notification failed", { message: notifyError.message, partnerId: partner._id });
+    }
+
+    const partnerData = partner.toObject();
+    delete partnerData.password;
 
     res.status(201).json({
       message: "Partner registered successfully",
-      data: partner,
-      hotels: [partner]
+      data: partnerData,
+      hotels: [partnerData],
+      approvalStatus: PARTNER_APPROVAL_STATUS.PENDING
     });
 
   } catch (error) {
+    cleanupPartnerDocumentFiles(getUploadedPartnerFiles(req));
     res.status(500).json({ message: error.message });
   }
 };
@@ -87,9 +234,12 @@ exports.loginPartner = async (req, res) => {
   try {
     logger.info("Partner login request received", { email: req.body?.email });
 
-    const { email, password } = req.body;
+    const { email, password } = req.body || {};
+    const normalizedEmail = normalizeText(email).toLowerCase();
 
-    const partner = await Partner.findOne({ email });
+    const partner = await Partner.findOne({
+      email: new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i")
+    });
 
     if (!partner) {
       return res.status(400).json({
@@ -105,13 +255,25 @@ exports.loginPartner = async (req, res) => {
       });
     }
 
+    const approvalGate = getApprovalGate(partner);
+    if (!approvalGate.allowed) {
+      return res.status(403).json({
+        message: approvalGate.message,
+        code: approvalGate.code,
+        approvalStatus: approvalGate.approvalStatus,
+        rejectionReason: approvalGate.rejectionReason || undefined
+      });
+    }
+
     const token = generateToken(partner);
     const { hotels } = await fetchManagedHotels(partner._id);
+    const partnerData = partner.toObject();
+    delete partnerData.password;
 
     res.json({
       message: "Login successful",
       token,
-      partner,
+      partner: partnerData,
       hotels
     });
 
@@ -731,14 +893,20 @@ exports.createHotel = async (req, res) => {
       phone,
       address,
       latitude,
-      longitude
+      longitude,
+      approvalStatus: PARTNER_APPROVAL_STATUS.APPROVED,
+      status: "ACTIVE",
+      isActive: true
     });
+
+    const hotelData = hotel.toObject();
+    delete hotelData.password;
 
     const { hotels } = await fetchManagedHotels(req.partner.id);
 
     return res.status(201).json({
       message: "Hotel created successfully",
-      data: hotel,
+      data: hotelData,
       hotels
     });
   } catch (error) {

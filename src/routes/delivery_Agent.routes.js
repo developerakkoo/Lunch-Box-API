@@ -5,6 +5,10 @@ const attachDeliveryAgent = require("../middlewares/attachDeliveryAgent.middlewa
 const requireApprovedDriver = require("../middlewares/requireApprovedDriver.middleware");
 const { upload, handleUploadError } = require("../middlewares/upload.middleware");
 const {
+  uploadDriverDocuments,
+  handleDriverDocumentUploadError
+} = require("../middlewares/driverDocumentUpload.middleware");
+const {
   logCompleteOrderEntry,
   logCompleteOrderAfterAuth,
   logCompleteOrderAfterUpload
@@ -26,14 +30,24 @@ const {
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             $ref: '#/components/schemas/DriverRegisterRequest'
  *     responses:
  *       201:
  *         description: Driver registered successfully
  */
-router.post("/register", controller.registerDriver);
+router.post(
+  "/register",
+  uploadDriverDocuments.fields([
+    { name: "aadhaarCard", maxCount: 1 },
+    { name: "panCard", maxCount: 1 },
+    { name: "drivingLicense", maxCount: 1 },
+    { name: "vehicleRc", maxCount: 1 }
+  ]),
+  handleDriverDocumentUploadError,
+  controller.registerDriver
+);
 
 /**
  * @swagger
@@ -50,6 +64,8 @@ router.post("/register", controller.registerDriver);
  *     responses:
  *       200:
  *         description: Login successful
+ *       403:
+ *         description: Account pending approval or rejected
  */
 router.post("/login", controller.loginDriver);
 

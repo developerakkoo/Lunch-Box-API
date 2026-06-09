@@ -11,6 +11,10 @@
 const router = require('express').Router()
 const controller = require('../controller/partner.controller')
 const auth = require('../middlewares/partnerAuth.middleware')
+const {
+  uploadPartnerDocuments,
+  handlePartnerDocumentUploadError
+} = require("../middlewares/partnerDocumentUpload.middleware");
 
 /**
  * @swagger
@@ -27,14 +31,23 @@ const auth = require('../middlewares/partnerAuth.middleware')
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             $ref: '#/components/schemas/PartnerRegisterRequest'
  *     responses:
  *       201:
  *         description: Partner registered
  */
-router.post('/register', controller.registerPartner)
+router.post(
+  '/register',
+  uploadPartnerDocuments.fields([
+    { name: "panCard", maxCount: 1 },
+    { name: "gstCertificate", maxCount: 1 },
+    { name: "fssaiLicense", maxCount: 1 }
+  ]),
+  handlePartnerDocumentUploadError,
+  controller.registerPartner
+)
 
 /**
  * @swagger
@@ -51,6 +64,8 @@ router.post('/register', controller.registerPartner)
  *     responses:
  *       200:
  *         description: Login successful
+ *       403:
+ *         description: Account pending approval or rejected
  */
 router.post('/login', controller.loginPartner)
 

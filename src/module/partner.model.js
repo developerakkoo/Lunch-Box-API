@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
+const { PARTNER_APPROVAL_STATUS } = require("../utils/partnerApproval");
 
 const partnerSchema = new mongoose.Schema(
   {
@@ -21,6 +22,8 @@ const partnerSchema = new mongoose.Schema(
 
     email: {
       type: String,
+      lowercase: true,
+      trim: true,
       required: function () {
         return !this.ownerPartner;
       },
@@ -33,6 +36,58 @@ const partnerSchema = new mongoose.Schema(
         return !this.ownerPartner;
       },
       default: undefined
+    },
+
+    approvalStatus: {
+      type: String,
+      enum: Object.values(PARTNER_APPROVAL_STATUS),
+      default: PARTNER_APPROVAL_STATUS.PENDING,
+      index: true
+    },
+
+    rejectionReason: {
+      type: String,
+      default: ""
+    },
+
+    reviewedAt: {
+      type: Date,
+      default: null
+    },
+
+    reviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      default: null
+    },
+
+    gstApplicable: {
+      type: Boolean,
+      default: false
+    },
+
+    documents: {
+      panCard: {
+        url: { type: String, default: "" },
+        originalName: { type: String, default: "" },
+        mimeType: { type: String, default: "" },
+        size: { type: Number, default: 0 },
+        uploadedAt: { type: Date, default: null }
+      },
+      gstCertificate: {
+        url: { type: String, default: "" },
+        originalName: { type: String, default: "" },
+        mimeType: { type: String, default: "" },
+        size: { type: Number, default: 0 },
+        uploadedAt: { type: Date, default: null }
+      },
+      fssaiLicense: {
+        url: { type: String, default: "" },
+        originalName: { type: String, default: "" },
+        mimeType: { type: String, default: "" },
+        size: { type: Number, default: 0 },
+        uploadedAt: { type: Date, default: null }
+      }
     },
 
     phone: String,
@@ -72,6 +127,8 @@ partnerSchema.index(
     }
   }
 );
+
+partnerSchema.index({ approvalStatus: 1, createdAt: -1 });
 
 
 // 🔐 Hash Password Before Save

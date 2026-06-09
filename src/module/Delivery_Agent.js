@@ -1,6 +1,17 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
+const driverDocumentMetaSchema = new mongoose.Schema(
+  {
+    url: { type: String, default: "" },
+    originalName: { type: String, default: "" },
+    mimeType: { type: String, default: "" },
+    size: { type: Number, default: 0 },
+    uploadedAt: { type: Date, default: null }
+  },
+  { _id: false }
+);
+
 const deliveryAgentSchema = new mongoose.Schema(
   {
     /*
@@ -83,6 +94,23 @@ const deliveryAgentSchema = new mongoose.Schema(
     |--------------------------------------------------------------------------
     */
     documents: {
+      aadhaarCard: {
+        type: driverDocumentMetaSchema,
+        default: () => ({})
+      },
+      panCard: {
+        type: driverDocumentMetaSchema,
+        default: () => ({})
+      },
+      drivingLicense: {
+        type: driverDocumentMetaSchema,
+        default: () => ({})
+      },
+      vehicleRc: {
+        type: driverDocumentMetaSchema,
+        default: () => ({})
+      },
+      // Legacy fields retained for backward compatibility with older records
       licenseNumber: String,
       licenseImage: String,
       aadhaarNumber: String,

@@ -54,15 +54,42 @@ const options = {
 
         /* ================= DRIVER ================= */
 
+        DriverApprovalStatus: {
+          type: "string",
+          enum: ["PENDING", "APPROVED", "REJECTED", "BLOCKED"],
+          example: "PENDING"
+        },
+
+        DriverDocumentMeta: {
+          type: "object",
+          properties: {
+            url: { type: "string", example: "/uploads/driver-documents/1700000000-uuid.pdf" },
+            originalName: { type: "string", example: "aadhaar.pdf" },
+            mimeType: { type: "string", example: "application/pdf" },
+            size: { type: "number", example: 245112 },
+            uploadedAt: { type: "string", format: "date-time" }
+          }
+        },
+
         DriverRegisterRequest: {
           type: "object",
-          required: ["fullName", "email", "password", "mobileNumber", "address"],
+          required: ["fullName", "email", "password", "mobileNumber", "address", "vehicleType", "aadhaarCard", "panCard", "vehicleRc"],
           properties: {
             fullName: { type: "string", example: "Driver Rahul" },
             email: { type: "string", example: "driver@gmail.com" },
             password: { type: "string", example: "123456" },
             mobileNumber: { type: "string", example: "9876543210" },
-            address: { type: "string", example: "Pune" }
+            address: { type: "string", example: "Pune" },
+            vehicleType: { type: "string", enum: ["BIKE", "SCOOTER", "BICYCLE", "CAR"], example: "BIKE" },
+            vehicleNumber: { type: "string", example: "MH12AB1234" },
+            vehicleModel: { type: "string", example: "Activa 6G" },
+            vehicleColor: { type: "string", example: "Black" },
+            aadhaarCard: { type: "string", format: "binary" },
+            panCard: { type: "string", format: "binary" },
+            drivingLicense: { type: "string", format: "binary" },
+            vehicleRc: { type: "string", format: "binary" },
+            documents: { type: "object", additionalProperties: true },
+            vehicle: { type: "object", additionalProperties: true }
           }
         },
 
@@ -115,11 +142,20 @@ const options = {
 
         PartnerRegisterRequest: {
           type: "object",
+          required: ["kitchenName", "ownerName", "email", "password", "panCard", "fssaiLicense"],
           properties: {
             kitchenName: { type: "string", example: "Spicy House" },
             ownerName: { type: "string", example: "Rahul" },
             email: { type: "string", example: "rahul@gmail.com" },
-            password: { type: "string", example: "123456" }
+            password: { type: "string", example: "123456" },
+            phone: { type: "string", example: "9876543210" },
+            address: { type: "string", example: "Pune, Maharashtra" },
+            latitude: { type: "number", example: 18.5204 },
+            longitude: { type: "number", example: 73.8567 },
+            gstApplicable: { type: "boolean", example: false },
+            panCard: { type: "string", format: "binary" },
+            gstCertificate: { type: "string", format: "binary" },
+            fssaiLicense: { type: "string", format: "binary" }
           }
         },
 
@@ -140,6 +176,23 @@ const options = {
             address: { type: "string", example: "Pune, Maharashtra" },
             latitude: { type: "number", example: 18.5204 },
             longitude: { type: "number", example: 73.8567 }
+          }
+        },
+
+        PartnerApprovalStatus: {
+          type: "string",
+          enum: ["PENDING", "APPROVED", "REJECTED"],
+          example: "PENDING"
+        },
+
+        PartnerDocumentMeta: {
+          type: "object",
+          properties: {
+            url: { type: "string", example: "/uploads/partner-documents/1700000000-uuid.pdf" },
+            originalName: { type: "string", example: "pan-card.pdf" },
+            mimeType: { type: "string", example: "application/pdf" },
+            size: { type: "number", example: 245112 },
+            uploadedAt: { type: "string", format: "date-time" }
           }
         },
 

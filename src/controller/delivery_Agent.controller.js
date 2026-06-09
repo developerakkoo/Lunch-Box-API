@@ -6,6 +6,10 @@ const Partner = require("../module/partner.model");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const logger = require("../utils/logger");
+const { deleteUploadedFile } = require("../utils/fileStorage");
+const {
+  getDriverApprovalGate,
+} = require("../utils/driverApproval");
 const {
   emitOrderPicked,
   emitOrderDelivered
@@ -30,6 +34,70 @@ const {
 
 const getDriverIdFromReq = (req) => req?.driver?.id;
 const ACTIVE_DELIVERY_STATUSES = ["READY", "OUT_FOR_DELIVERY"];
+const DRIVER_DOCUMENT_FIELDS = ["aadhaarCard", "panCard", "drivingLicense", "vehicleRc"];
+
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const normalizeText = (value) => (typeof value === "string" ? value.trim() : "");
+
+const toBoolean = (value) => {
+  if (typeof value === "boolean") return value;
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0" || value == null) return false;
+  return Boolean(value);
+};
+
+const parseOptionalNumber = (value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const safeJsonParse = (value, fallback = {}) => {
+  if (!value || typeof value !== "string") return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+};
+
+const buildDocumentMeta = (file) => ({
+  url: `/uploads/driver-documents/${file.filename}`,
+  originalName: file.originalname || "",
+  mimeType: file.mimetype || "",
+  size: file.size || 0,
+  uploadedAt: new Date()
+});
+
+const getUploadedDriverFiles = (req) => {
+  const files = [];
+  for (const field of DRIVER_DOCUMENT_FIELDS) {
+    const fieldFiles = req.files?.[field] || [];
+    for (const file of fieldFiles) {
+      files.push({ ...file, fieldName: field });
+    }
+  }
+  return files;
+};
+
+const cleanupDriverDocumentFiles = (files) => {
+  if (!files) return;
+  for (const file of files) {
+    deleteUploadedFile(file?.filename || file?.path || file?.url);
+  }
+};
+
+const requireDriverDocuments = ({ vehicleType, docs }) => {
+  const missing = [];
+  if (!docs.aadhaarCard) missing.push("aadhaarCard");
+  if (!docs.panCard) missing.push("panCard");
+  if (!docs.vehicleRc) missing.push("vehicleRc");
+  if (["BIKE", "SCOOTER"].includes(vehicleType) && !docs.drivingLicense) {
+    missing.push("drivingLicense");
+  }
+  return missing;
+};
 
 const getUploadedProofFile = (req) => {
   if (req.file) return req.file;
@@ -83,44 +151,108 @@ const syncAgentAvailability = async (agent) => {
 exports.registerDriver = async (req, res) => {
   try {
     logger.info("Driver register request received", { email: req.body?.email });
-    const {
-      fullName,
-      email,
-      password,
-      mobileNumber,
-      address,
-      vehicle = {},
-      documents = {}
-    } = req.body;
+    const body = req.body || {};
+    const fullName = normalizeText(body.fullName);
+    const email = normalizeText(body.email).toLowerCase();
+    const password = body.password;
+    const mobileNumber = normalizeText(body.mobileNumber);
+    const address = normalizeText(body.address);
+    const vehicleInput = safeJsonParse(body.vehicle, {});
+    const documentsInput = safeJsonParse(body.documents, {});
+    const vehicleType = normalizeText(body.vehicleType || vehicleInput.type || vehicleInput.vehicleType).toUpperCase();
+    const vehicleNumber = normalizeText(body.vehicleNumber || vehicleInput.vehicleNumber);
+    const vehicleModel = normalizeText(body.vehicleModel || vehicleInput.model);
+    const vehicleColor = normalizeText(body.vehicleColor || vehicleInput.color);
+    const parsedDocs = getUploadedDriverFiles(req);
+    const fileMap = new Map(parsedDocs.map((file) => [file.fieldName, file]));
 
-    if (!fullName || !email || !password || !mobileNumber || !address) {
-      return res.status(400).json({ message: "fullName, email, password, mobileNumber and address are required" });
+    if (!fullName || !email || !password || !mobileNumber || !address || !vehicleType) {
+      cleanupDriverDocumentFiles(parsedDocs);
+      return res.status(400).json({
+        message: "fullName, email, password, mobileNumber, address and vehicleType are required"
+      });
     }
 
-    const exists = await DeliveryAgent.findOne({ email: email.toLowerCase() });
+    if (!["BIKE", "SCOOTER", "BICYCLE", "CAR"].includes(vehicleType)) {
+      cleanupDriverDocumentFiles(parsedDocs);
+      return res.status(400).json({
+        message: "vehicleType must be one of BIKE, SCOOTER, BICYCLE, CAR"
+      });
+    }
+
+    const exists = await DeliveryAgent.findOne({
+      email: new RegExp(`^${escapeRegex(email)}$`, "i")
+    });
     if (exists) {
+      cleanupDriverDocumentFiles(parsedDocs);
       return res.status(400).json({ message: "Email already registered" });
+    }
+
+    const aadhaarFile = fileMap.get("aadhaarCard");
+    const panFile = fileMap.get("panCard");
+    const drivingLicenseFile = fileMap.get("drivingLicense");
+    const vehicleRcFile = fileMap.get("vehicleRc");
+
+    const missing = requireDriverDocuments({
+      vehicleType,
+      docs: {
+        aadhaarCard: aadhaarFile,
+        panCard: panFile,
+        drivingLicense: drivingLicenseFile,
+        vehicleRc: vehicleRcFile
+      }
+    });
+
+    if (missing.length) {
+      cleanupDriverDocumentFiles(parsedDocs);
+      return res.status(400).json({
+        message: `Missing required documents: ${missing.join(", ")}`
+      });
+    }
+
+    const documents = {
+      aadhaarCard: buildDocumentMeta(aadhaarFile),
+      panCard: buildDocumentMeta(panFile),
+      vehicleRc: buildDocumentMeta(vehicleRcFile),
+      aadhaarNumber: normalizeText(documentsInput.aadhaarNumber || ""),
+      panNumber: normalizeText(documentsInput.panNumber || ""),
+      licenseNumber: normalizeText(documentsInput.licenseNumber || ""),
+      aadhaarImage: documentsInput.aadhaarImage || "",
+      panImage: documentsInput.panImage || "",
+      licenseImage: documentsInput.licenseImage || ""
+    };
+
+    if (drivingLicenseFile) {
+      documents.drivingLicense = buildDocumentMeta(drivingLicenseFile);
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const driver = await DeliveryAgent.create({
       fullName,
-      email: email.toLowerCase(),
+      email,
       password: hashedPassword,
       mobileNumber,
       address,
-      vehicle,
+      vehicle: {
+        type: vehicleType,
+        vehicleNumber: vehicleNumber || undefined,
+        model: vehicleModel || undefined,
+        color: vehicleColor || undefined
+      },
       documents,
       profileCompleted: true,
       status: "PENDING",
     });
 
+    const driverData = driver.toJSON();
+
     return res.status(201).json({
       message: "Driver registered successfully",
-      data: driver.toJSON(),
+      data: driverData,
     });
   } catch (error) {
+    cleanupDriverDocumentFiles(getUploadedDriverFiles(req));
     logger.error("Driver registration failed", { message: error.message });
     return res.status(500).json({ message: error.message });
   }
@@ -130,7 +262,10 @@ exports.loginDriver = async (req, res) => {
   try {
     logger.info("Driver login request received", { email: req.body?.email });
     const { email, password } = req.body;
-    const driver = await DeliveryAgent.findOne({ email: String(email || "").toLowerCase() });
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const driver = await DeliveryAgent.findOne({
+      email: new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i")
+    });
 
     if (!driver) {
       return res.status(404).json({ message: "Driver not found" });
@@ -148,14 +283,26 @@ exports.loginDriver = async (req, res) => {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
+    const approvalGate = getDriverApprovalGate(driver);
+    if (!approvalGate.allowed) {
+      return res.status(403).json({
+        message: approvalGate.message,
+        code: approvalGate.code,
+        status: approvalGate.status,
+        rejectionReason: approvalGate.rejectionReason || undefined
+      });
+    }
+
     const token = jwt.sign({ id: driver._id }, process.env.JWT_SECRET, {
       expiresIn: "7d"
     });
 
+    const driverData = driver.toJSON();
+
     return res.status(200).json({
       message: "Login successful",
       token,
-      driver: driver.toJSON(),
+      driver: driverData,
     });
   } catch (error) {
     logger.error("Driver login failed", { message: error.message });

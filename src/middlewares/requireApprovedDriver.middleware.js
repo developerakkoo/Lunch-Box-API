@@ -1,9 +1,11 @@
 /**
  * Use after attachDeliveryAgent. Blocks operational APIs unless status is APPROVED.
  */
+const { getDriverApprovalGate } = require("../utils/driverApproval");
+
 module.exports = (req, res, next) => {
-  const status = req.deliveryAgent?.status;
-  if (status === "APPROVED") {
+  const gate = getDriverApprovalGate(req.deliveryAgent);
+  if (gate.allowed) {
     return next();
   }
   const map = {
@@ -11,14 +13,14 @@ module.exports = (req, res, next) => {
     REJECTED: "ACCOUNT_REJECTED",
     BLOCKED: "ACCOUNT_BLOCKED",
   };
-  const code = map[status] || "ACCOUNT_NOT_ALLOWED";
+  const code = gate.code || map[gate.status] || "ACCOUNT_NOT_ALLOWED";
   const messages = {
     PENDING: "Your account is pending approval.",
     REJECTED: "Your registration was not approved.",
     BLOCKED: "This account is blocked.",
   };
   return res.status(403).json({
-    message: messages[status] || "Action not allowed for this account.",
+    message: gate.message || messages[gate.status] || "Action not allowed for this account.",
     code,
   });
 };

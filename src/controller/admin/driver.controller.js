@@ -2,10 +2,26 @@ const mongoose = require("mongoose");
 const DeliveryAgent = require("../../module/Delivery_Agent");
 const logger = require("../../utils/logger");
 const { notifyDeliveryAgent } = require("../../utils/deliveryNotification");
+const { normalizeDriverStatus, DRIVER_ACCOUNT_STATUS } = require("../../utils/driverApproval");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
 const REJECT_REASON_MIN = 10;
+
+const buildDocumentSummary = (documents = {}) => ({
+  aadhaarCard: documents.aadhaarCard || null,
+  panCard: documents.panCard || null,
+  drivingLicense: documents.drivingLicense || null,
+  vehicleRc: documents.vehicleRc || null,
+  legacy: {
+    licenseNumber: documents.licenseNumber || "",
+    licenseImage: documents.licenseImage || "",
+    aadhaarNumber: documents.aadhaarNumber || "",
+    aadhaarImage: documents.aadhaarImage || "",
+    panNumber: documents.panNumber || "",
+    panImage: documents.panImage || ""
+  }
+});
 
 exports.listDrivers = async (req, res) => {
   try {
@@ -26,8 +42,9 @@ exports.listDrivers = async (req, res) => {
       query.deletedAt = null;
     }
 
-    if (status && ["PENDING", "APPROVED", "REJECTED", "BLOCKED"].includes(String(status))) {
-      query.status = status;
+    const normalizedStatus = String(status || "").toUpperCase();
+    if (normalizedStatus && Object.values(DRIVER_ACCOUNT_STATUS).includes(normalizedStatus)) {
+      query.status = normalizedStatus;
     }
 
     if (search) {
@@ -53,10 +70,16 @@ exports.listDrivers = async (req, res) => {
       DeliveryAgent.countDocuments(query),
     ]);
 
+    const normalizedData = data.map((driver) => ({
+      ...driver,
+      status: normalizeDriverStatus(driver.status),
+      documents: buildDocumentSummary(driver.documents)
+    }));
+
     return res.status(200).json({
       message: "Drivers fetched successfully",
       pagination: { page: pageNumber, limit: limitNumber, total },
-      data,
+      data: normalizedData,
     });
   } catch (error) {
     logger.error("Admin list drivers failed", { message: error.message });
@@ -82,7 +105,11 @@ exports.getDriverById = async (req, res) => {
 
     return res.status(200).json({
       message: "Driver fetched successfully",
-      data: driver,
+      data: {
+        ...driver,
+        status: normalizeDriverStatus(driver.status),
+        documents: buildDocumentSummary(driver.documents)
+      },
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -179,11 +206,13 @@ exports.approveDriver = async (req, res) => {
       return res.status(404).json({ message: "Driver not found" });
     }
 
-    if (driver.status === "BLOCKED") {
+    const currentStatus = normalizeDriverStatus(driver.status);
+
+    if (currentStatus === "BLOCKED") {
       return res.status(409).json({ message: "Cannot approve a blocked driver" });
     }
 
-    if (driver.status === "APPROVED") {
+    if (currentStatus === "APPROVED") {
       return res.status(409).json({ message: "Driver is already approved" });
     }
 
@@ -233,7 +262,9 @@ exports.rejectDriver = async (req, res) => {
       return res.status(404).json({ message: "Driver not found" });
     }
 
-    if (driver.status === "BLOCKED") {
+    const currentStatus = normalizeDriverStatus(driver.status);
+
+    if (currentStatus === "BLOCKED") {
       return res.status(409).json({ message: "Cannot reject a blocked driver" });
     }
 

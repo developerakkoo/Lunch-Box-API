@@ -37,6 +37,12 @@ const adminAuth = require("../../middlewares/adminAuth.middleware");
  *           type: string
  *         description: Use partner id or ROOT for primary owner accounts
  *       - in: query
+ *         name: approvalStatus
+ *         schema:
+ *           type: string
+ *           enum: [PENDING, APPROVED, REJECTED]
+ *         description: Filter by partner approval state
+ *       - in: query
  *         name: page
  *         schema:
  *           type: number
@@ -104,5 +110,56 @@ router.get("/kitchens/:id", adminAuth, controller.getKitchenDetails);
  *         description: Kitchen status updated successfully
  */
 router.put("/kitchen/status/:id", adminAuth, controller.updateKitchenStatus);
+
+/**
+ * @swagger
+ * /api/admin/kitchens/{id}/approve:
+ *   post:
+ *     summary: Approve a partner registration
+ *     tags: [Kitchen Management]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Kitchen approved successfully
+ */
+router.post("/kitchens/:id/approve", adminAuth, controller.approveKitchen);
+
+/**
+ * @swagger
+ * /api/admin/kitchens/{id}/reject:
+ *   post:
+ *     summary: Reject a partner registration
+ *     tags: [Kitchen Management]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [reason]
+ *             properties:
+ *               reason:
+ *                 type: string
+ *                 example: Missing valid FSSAI document
+ *     responses:
+ *       200:
+ *         description: Kitchen rejected successfully
+ */
+router.post("/kitchens/:id/reject", adminAuth, controller.rejectKitchen);
 
 module.exports = router;
