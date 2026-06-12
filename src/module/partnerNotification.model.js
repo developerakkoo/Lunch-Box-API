@@ -15,6 +15,10 @@ const partnerNotificationSchema = new mongoose.Schema(
         "ORDER_CANCELLED",
         "ORDER_UPDATED",
         "SUBSCRIPTION_ORDER",
+        "REGISTRATION_RECEIVED",
+        "ACCOUNT_APPROVED",
+        "ACCOUNT_REJECTED",
+        "DOCUMENTS_RESUBMITTED",
         "SYSTEM"
       ],
       default: "SYSTEM"

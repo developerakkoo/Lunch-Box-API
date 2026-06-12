@@ -30,20 +30,43 @@ All paths below are relative to this origin.
 | `email` | string | Yes |
 | `password` | string | Yes |
 
-**Success — `200 OK`**
+**Success — `200 OK` (approved partner)**
 
 ```json
 {
   "message": "Login successful",
   "token": "<JWT>",
+  "scope": "FULL",
+  "approvalStatus": "APPROVED",
   "partner": { },
   "hotels": [ ]
 }
 ```
 
-- **`token`:** JWT signed with `ACCESS_SECRET`, payload `{ "id": "<mongoId>" }`, expiry **1 day** (see `generateToken` in `src/controller/partner.controller.js`). The `id` is the **logged-in partner document** id (owner account).
-- **`partner` / `hotels`:** Raw Mongoose documents/arrays. **Do not persist or display `password` if present** (see appendix).
-- **`hotels`:** All kitchens this account may manage (owner row + child hotels with `ownerPartner` set).
+**Success — `200 OK` (pending / rejected partner)**
+
+Login **no longer returns 403** for unapproved accounts. Instead it returns `200` with a
+limited-scope (`VERIFICATION`) token so the app can reach the verification screen, refresh
+status, and re-upload documents:
+
+```json
+{
+  "message": "Your partner account is pending admin approval.",
+  "code": "ACCOUNT_PENDING_APPROVAL",
+  "token": "<JWT scope=VERIFICATION>",
+  "scope": "VERIFICATION",
+  "approvalStatus": "PENDING",
+  "rejectionReason": "",
+  "documents": { "panCard": true, "fssaiLicense": true, "gstCertificate": false },
+  "partner": { },
+  "hotels": []
+}
+```
+
+- **`token`:** JWT signed with `ACCESS_SECRET`, payload `{ "id": "<mongoId>", "scope": "FULL" | "VERIFICATION" }`, expiry **1 day** (see `generateToken` in `src/controller/partner.controller.js`). Legacy tokens without a `scope` claim are treated as `FULL`.
+- **`scope`:** `FULL` reaches every partner route; `VERIFICATION` only reaches `GET /api/partner/verification` and `PATCH /api/partner/documents`. Full routes still enforce the DB approval gate.
+- **`approvalStatus`:** `PENDING` | `APPROVED` | `REJECTED`. Route the app to `/verification` whenever this is not `APPROVED`.
+- **`partner` / `hotels`:** Raw Mongoose documents/arrays. `hotels` is empty until approved. **Do not persist or display `password` if present** (see appendix).
 
 **Errors**
 
@@ -150,16 +173,36 @@ Typical statuses: `400`, `403`, `404`, `500`.
 `POST /api/partner/register`  
 **Auth:** None
 
-**Body:**
+Registration uploads KYC documents. Two transports are supported:
+
+- **`multipart/form-data`** (web): document fields `panCard`, `fssaiLicense`, `gstCertificate` as file parts.
+- **`application/json`** (native/Capacitor): documents as base64 JSON — see fields below. This avoids Android WebView multipart failures and mirrors the driver app's proof-upload path.
+
+**Body (text fields):**
 
 | Field | Type | Required |
 |-------|------|----------|
-| `kitchenName` | string | Yes (implicit for create) |
+| `kitchenName` | string | Yes |
 | `ownerName` | string | Yes |
 | `email` | string | Yes |
 | `password` | string | Yes |
+| `phone` | string | No |
+| `address` | string | No |
+| `latitude` | number | Yes |
+| `longitude` | number | Yes |
+| `gstApplicable` | boolean | No (default false) |
 
-**Success — `201 Created`**
+**Body (documents):**
+
+| Field (multipart) | Field (JSON) | Required |
+|-------------------|--------------|----------|
+| `panCard` (file) | `panCardBase64` + `panCardMimeType` + `panCardName` | Yes |
+| `fssaiLicense` (file) | `fssaiLicenseBase64` + `fssaiLicenseMimeType` + `fssaiLicenseName` | Yes |
+| `gstCertificate` (file) | `gstCertificateBase64` + `gstCertificateMimeType` + `gstCertificateName` | Required when `gstApplicable` is true |
+
+Accepted document types: JPEG, PNG, WEBP, HEIC/HEIF, PDF (max 10MB each). Base64 may be a raw string or a `data:<mime>;base64,...` data URL.
+
+**Success — `201 Created`** — new accounts start `PENDING`.
 
 ```json
 {
@@ -173,14 +216,81 @@ Typical statuses: `400`, `403`, `404`, `500`.
 
 | Status | `message` |
 |--------|-----------|
-| `400` | `Email already registered` |
+| `400` | `PAN Card and FSSAI License are required` / `GST Certificate is required when gstApplicable is true` / `latitude and longitude must be valid numbers when provided` / `Email already registered` |
 | `500` | Server error message |
+
+After register, call **login** to obtain a token; route to `/verification` because `approvalStatus` is `PENDING`.
 
 ---
 
 ### 5.2 Login
 
 See [§2.1](#21-login).
+
+---
+
+### 5.3 Verification status
+
+`GET /api/partner/verification`  
+**Auth:** Bearer token of **any scope** (works with the `VERIFICATION` token from login).
+
+Returns the current approval state for the verification screen. When the partner has been
+**approved**, the response also includes a fresh **`FULL` token** and `hotels`, so the app can
+proceed into the dashboard on refresh without re-entering the password.
+
+**Success — `200 OK`**
+
+```json
+{
+  "message": "Verification status fetched successfully",
+  "approvalStatus": "PENDING",
+  "rejectionReason": "",
+  "documents": { "panCard": true, "fssaiLicense": true, "gstCertificate": false },
+  "reviewedAt": null,
+  "partner": { "_id": "...", "kitchenName": "...", "ownerName": "...", "email": "...", "phone": "..." }
+}
+```
+
+When `approvalStatus === "APPROVED"`, the body additionally contains `token` (FULL), `scope: "FULL"`, and `hotels`.
+
+---
+
+### 5.4 Resubmit documents
+
+`PATCH /api/partner/documents`  
+**Auth:** Bearer token of **any scope** (verification token is sufficient).
+
+Re-upload one or more documents after a rejection (or to update while pending). Accepts the
+same multipart or base64 JSON document fields as register (send only the documents you want to
+replace). Resets `approvalStatus` to `PENDING` and clears the rejection reason.
+
+**Success — `200 OK`**
+
+```json
+{
+  "message": "Documents resubmitted successfully",
+  "approvalStatus": "PENDING",
+  "documents": { "panCard": true, "fssaiLicense": true, "gstCertificate": false }
+}
+```
+
+**Errors**
+
+| Status | `message` |
+|--------|-----------|
+| `400` | `At least one document is required (panCard, fssaiLicense or gstCertificate)` |
+| `409` | `Approved partners cannot resubmit documents` |
+
+---
+
+### 5.5 Admin approval queue
+
+Admins manage verification from `/api/admin/kitchens`:
+
+- `GET /api/admin/kitchens?approvalStatus=PENDING|APPROVED|REJECTED` — filter the queue.
+- `GET /api/admin/kitchens/:id` — detail incl. `documents` (with download URLs) under `data.documents`.
+- `POST /api/admin/kitchens/:id/approve` — approve + notify partner.
+- `POST /api/admin/kitchens/:id/reject` — body `{ "reason": "<min 10 chars>" }`, notify partner.
 
 ---
 
@@ -882,3 +992,22 @@ Register/login and some list endpoints may serialize full Mongoose `Partner` doc
 | GET | `/api/addon/category/list` |
 | GET | `/api/addon/item/list` |
 | DELETE | `/api/addon/item/delete/:id` |
+| GET | `/api/partner/verification` |
+| PATCH | `/api/partner/documents` |
+
+---
+
+## Appendix — Manual e2e verification & approval checklist
+
+Run end-to-end after backend + partner app + admin app are deployed:
+
+1. **Register (PENDING):** Sign up in the partner app with PAN + FSSAI (and GST if applicable). Expect `201`, then auto-login lands on the **Verification** screen showing `Pending review`.
+2. **Admin sees queue:** In admin → Partners, filter `Pending`. The new kitchen appears with a `Pending` verification badge.
+3. **Admin views documents:** Open the partner drawer; PAN/FSSAI/GST links open the uploaded files.
+4. **Admin rejects (reason):** Reject with a clear reason (≥10 chars). Partner status flips to `Rejected`.
+5. **Partner sees rejection:** On the Verification screen, tap **Refresh status** (or pull-to-refresh). The rejection reason is shown and re-upload controls appear.
+6. **Partner re-uploads:** Replace the flagged document(s) and **Resubmit for review**. Status returns to `Pending` (admin queue shows it again).
+7. **Admin approves:** Approve the partner. They are notified.
+8. **Partner enters app:** On the Verification screen, tap **Refresh status**. The app stores the fresh FULL token + hotels and navigates into `/tabs/tab1` without re-login.
+9. **Guard check:** While `PENDING`/`REJECTED`, attempting to navigate to `/tabs` or `/kitchen` redirects back to `/verification`. A `403` with `ACCOUNT_PENDING_APPROVAL`/`ACCOUNT_REJECTED` on any full route also routes to `/verification`.
+10. **Native upload:** On a real Android device, confirm document upload works (base64 JSON path) for both register and resubmit.

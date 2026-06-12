@@ -13,8 +13,10 @@ const { deleteUploadedFile } = require("../utils/fileStorage");
 const { notifyPartner } = require("../utils/partnerNotification");
 const {
   PARTNER_APPROVAL_STATUS,
-  getApprovalGate
+  getApprovalGate,
+  normalizeApprovalStatus
 } = require("../utils/partnerApproval");
+const { savePartnerBase64Document } = require("../utils/partnerDocuments.util");
 const {
   getManagedHotels: fetchManagedHotels,
   getManagedHotelIds,
@@ -42,13 +44,24 @@ const LEGACY_ORDER_STATUS_MAP = {
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
-const generateToken = (partner) => {
+const PARTNER_TOKEN_SCOPE = {
+  FULL: "FULL",
+  VERIFICATION: "VERIFICATION"
+};
+
+const generateToken = (partner, scope = PARTNER_TOKEN_SCOPE.FULL) => {
   return jwt.sign(
-    { id: partner._id },
+    { id: partner._id, scope },
     process.env.ACCESS_SECRET,
     { expiresIn: "1d" }
   );
 };
+
+const buildDocumentSummary = (documents = {}) => ({
+  panCard: Boolean(documents?.panCard?.url),
+  gstCertificate: Boolean(documents?.gstCertificate?.url),
+  fssaiLicense: Boolean(documents?.fssaiLicense?.url)
+});
 
 const PARTNER_DOCUMENT_FIELDS = ["panCard", "gstCertificate", "fssaiLicense"];
 
@@ -126,12 +139,13 @@ exports.registerPartner = async (req, res) => {
     const resolvedGstApplicable = toBoolean(gstApplicable);
     const parsedLatitude = parseOptionalNumber(latitude);
     const parsedLongitude = parseOptionalNumber(longitude);
-    const uploadedFiles = getUploadedPartnerFiles(req);
+    const isJson = String(req.headers["content-type"] || "").includes("application/json");
+    const uploadedFiles = isJson ? [] : getUploadedPartnerFiles(req);
     const fileMap = new Map(uploadedFiles.map((file) => [file.fieldName, file]));
 
-    const panCardFile = fileMap.get("panCard");
-    const gstCertificateFile = fileMap.get("gstCertificate");
-    const fssaiLicenseFile = fileMap.get("fssaiLicense");
+    // Native (Capacitor) clients send documents as base64 JSON; web uses multipart.
+    const hasDoc = (field) =>
+      isJson ? Boolean(req.body?.[`${field}Base64`]) : fileMap.has(field);
 
     if (!normalizedKitchenName || !normalizedOwnerName || !normalizedEmail || !password) {
       cleanupPartnerDocumentFiles(uploadedFiles);
@@ -147,14 +161,14 @@ exports.registerPartner = async (req, res) => {
       });
     }
 
-    if (!panCardFile || !fssaiLicenseFile) {
+    if (!hasDoc("panCard") || !hasDoc("fssaiLicense")) {
       cleanupPartnerDocumentFiles(uploadedFiles);
       return res.status(400).json({
         message: "PAN Card and FSSAI License are required"
       });
     }
 
-    if (resolvedGstApplicable && !gstCertificateFile) {
+    if (resolvedGstApplicable && !hasDoc("gstCertificate")) {
       cleanupPartnerDocumentFiles(uploadedFiles);
       return res.status(400).json({
         message: "GST Certificate is required when gstApplicable is true"
@@ -171,13 +185,27 @@ exports.registerPartner = async (req, res) => {
       });
     }
 
-    const documents = {
-      panCard: buildDocumentMeta(panCardFile),
-      fssaiLicense: buildDocumentMeta(fssaiLicenseFile)
+    const resolveDocumentMeta = (field) => {
+      if (isJson) {
+        if (!req.body?.[`${field}Base64`]) return null;
+        return savePartnerBase64Document(
+          req.body[`${field}Base64`],
+          req.body?.[`${field}MimeType`],
+          req.body?.[`${field}Name`]
+        );
+      }
+      const file = fileMap.get(field);
+      return file ? buildDocumentMeta(file) : null;
     };
 
-    if (gstCertificateFile) {
-      documents.gstCertificate = buildDocumentMeta(gstCertificateFile);
+    const documents = {
+      panCard: resolveDocumentMeta("panCard"),
+      fssaiLicense: resolveDocumentMeta("fssaiLicense")
+    };
+
+    const gstMeta = resolveDocumentMeta("gstCertificate");
+    if (gstMeta) {
+      documents.gstCertificate = gstMeta;
     }
 
     const partner = await Partner.create({
@@ -256,23 +284,34 @@ exports.loginPartner = async (req, res) => {
     }
 
     const approvalGate = getApprovalGate(partner);
+    const partnerData = partner.toObject();
+    delete partnerData.password;
+
+    // Pending/rejected partners receive a limited-scope token so they can reach
+    // the verification screen, refresh status, and re-upload documents.
     if (!approvalGate.allowed) {
-      return res.status(403).json({
+      const token = generateToken(partner, PARTNER_TOKEN_SCOPE.VERIFICATION);
+      return res.json({
         message: approvalGate.message,
         code: approvalGate.code,
+        token,
+        scope: PARTNER_TOKEN_SCOPE.VERIFICATION,
         approvalStatus: approvalGate.approvalStatus,
-        rejectionReason: approvalGate.rejectionReason || undefined
+        rejectionReason: approvalGate.rejectionReason || "",
+        documents: buildDocumentSummary(partner.documents),
+        partner: partnerData,
+        hotels: []
       });
     }
 
-    const token = generateToken(partner);
+    const token = generateToken(partner, PARTNER_TOKEN_SCOPE.FULL);
     const { hotels } = await fetchManagedHotels(partner._id);
-    const partnerData = partner.toObject();
-    delete partnerData.password;
 
     res.json({
       message: "Login successful",
       token,
+      scope: PARTNER_TOKEN_SCOPE.FULL,
+      approvalStatus: approvalGate.approvalStatus,
       partner: partnerData,
       hotels
     });
@@ -280,6 +319,141 @@ exports.loginPartner = async (req, res) => {
   } catch (error) {
     logger.error("Partner login failed", { message: error.message });
     res.status(500).json({ message: error.message });
+  }
+};
+
+/* ================= VERIFICATION STATUS ================= */
+
+exports.getVerificationStatus = async (req, res) => {
+  try {
+    const partnerId = req.partner?.id || req.partnerAccount?._id;
+    const partner = await Partner.findById(partnerId).select(
+      "kitchenName ownerName email phone approvalStatus rejectionReason reviewedAt documents createdAt"
+    );
+
+    if (!partner) {
+      return res.status(404).json({ message: "Partner not found" });
+    }
+
+    const approvalGate = getApprovalGate(partner);
+    const payload = {
+      message: "Verification status fetched successfully",
+      approvalStatus: approvalGate.approvalStatus,
+      rejectionReason: approvalGate.rejectionReason || "",
+      documents: buildDocumentSummary(partner.documents),
+      reviewedAt: partner.reviewedAt || null,
+      partner: {
+        _id: partner._id,
+        kitchenName: partner.kitchenName,
+        ownerName: partner.ownerName,
+        email: partner.email,
+        phone: partner.phone
+      }
+    };
+
+    // Once approved, hand back a full-access token + hotels so the app can
+    // proceed straight into the dashboard on refresh (no re-login needed).
+    if (approvalGate.allowed) {
+      const token = generateToken(partner, PARTNER_TOKEN_SCOPE.FULL);
+      const { hotels } = await fetchManagedHotels(partner._id);
+      payload.token = token;
+      payload.scope = PARTNER_TOKEN_SCOPE.FULL;
+      payload.hotels = hotels;
+    }
+
+    return res.status(200).json(payload);
+  } catch (error) {
+    logger.error("Partner verification status failed", { message: error.message });
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+/* ================= RESUBMIT DOCUMENTS ================= */
+
+exports.resubmitPartnerDocuments = async (req, res) => {
+  let uploadedFiles = [];
+  try {
+    const partnerId = req.partner?.id || req.partnerAccount?._id;
+    const partner = await Partner.findById(partnerId);
+
+    if (!partner) {
+      return res.status(404).json({ message: "Partner not found" });
+    }
+
+    const currentStatus = normalizeApprovalStatus(partner.approvalStatus);
+    if (currentStatus === PARTNER_APPROVAL_STATUS.APPROVED) {
+      return res.status(409).json({
+        message: "Approved partners cannot resubmit documents"
+      });
+    }
+
+    const isJson = String(req.headers["content-type"] || "").includes("application/json");
+    const updates = {};
+
+    if (isJson) {
+      for (const field of PARTNER_DOCUMENT_FIELDS) {
+        const base64 = req.body?.[`${field}Base64`];
+        if (!base64) continue;
+        const meta = savePartnerBase64Document(
+          base64,
+          req.body?.[`${field}MimeType`],
+          req.body?.[`${field}Name`]
+        );
+        updates[field] = meta;
+      }
+    } else {
+      uploadedFiles = getUploadedPartnerFiles(req);
+      for (const file of uploadedFiles) {
+        updates[file.fieldName] = buildDocumentMeta(file);
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      cleanupPartnerDocumentFiles(uploadedFiles);
+      return res.status(400).json({
+        message: "At least one document is required (panCard, fssaiLicense or gstCertificate)"
+      });
+    }
+
+    partner.documents = partner.documents || {};
+    for (const [field, meta] of Object.entries(updates)) {
+      partner.documents[field] = meta;
+    }
+
+    partner.approvalStatus = PARTNER_APPROVAL_STATUS.PENDING;
+    partner.rejectionReason = "";
+    partner.reviewedAt = null;
+    partner.reviewedBy = null;
+    partner.markModified("documents");
+    await partner.save();
+
+    try {
+      await notifyPartner({
+        partnerId: partner._id,
+        type: "DOCUMENTS_RESUBMITTED",
+        title: "Documents resubmitted",
+        message: "Your updated documents have been submitted and are awaiting admin review.",
+        data: { approvalStatus: PARTNER_APPROVAL_STATUS.PENDING }
+      });
+    } catch (notifyError) {
+      logger.warn("Partner document resubmission notification failed", {
+        message: notifyError.message,
+        partnerId: partner._id
+      });
+    }
+
+    return res.status(200).json({
+      message: "Documents resubmitted successfully",
+      approvalStatus: PARTNER_APPROVAL_STATUS.PENDING,
+      documents: buildDocumentSummary(partner.documents)
+    });
+  } catch (error) {
+    cleanupPartnerDocumentFiles(uploadedFiles);
+    logger.error("Partner document resubmission failed", { message: error.message });
+    return res.status(error.statusCode || 500).json({
+      message: error.message,
+      code: error.code
+    });
   }
 };
 
@@ -679,7 +853,7 @@ exports.getPartnerProfile = async (req, res) => {
     }
 
     const partner = await Partner.findById(selectedHotel._id).select(
-      "ownerPartner kitchenName ownerName email phone address latitude longitude isActive status createdAt updatedAt"
+      "ownerPartner kitchenName ownerName email phone address latitude longitude isActive status approvalStatus rejectionReason reviewedAt documents createdAt updatedAt"
     );
 
     const owner = await Partner.findById(ownerPartnerId).select(

@@ -7,6 +7,7 @@ const Category = require("../../module/category.model");
 const MenuItem = require("../../module/menuItem.model");
 const Order = require("../../module/order.model");
 const { notifyPartner } = require("../../utils/partnerNotification");
+const logger = require("../../utils/logger");
 const {
   PARTNER_APPROVAL_STATUS,
   normalizeApprovalStatus

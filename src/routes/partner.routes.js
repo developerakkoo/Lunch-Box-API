@@ -11,10 +11,28 @@
 const router = require('express').Router()
 const controller = require('../controller/partner.controller')
 const auth = require('../middlewares/partnerAuth.middleware')
+const verificationAuth = require('../middlewares/partnerVerificationAuth.middleware')
 const {
   uploadPartnerDocuments,
   handlePartnerDocumentUploadError
 } = require("../middlewares/partnerDocumentUpload.middleware");
+
+const partnerDocumentFields = uploadPartnerDocuments.fields([
+  { name: "panCard", maxCount: 1 },
+  { name: "gstCertificate", maxCount: 1 },
+  { name: "fssaiLicense", maxCount: 1 }
+]);
+
+// Native (Capacitor) clients send documents as base64 JSON to avoid Android
+// WebView multipart failures; web continues to use multipart/form-data.
+function maybePartnerDocumentUpload(req, res, next) {
+  if (String(req.headers["content-type"] || "").includes("application/json")) {
+    return next();
+  }
+  return partnerDocumentFields(req, res, (err) =>
+    handlePartnerDocumentUploadError(err, req, res, next)
+  );
+}
 
 /**
  * @swagger
@@ -40,12 +58,7 @@ const {
  */
 router.post(
   '/register',
-  uploadPartnerDocuments.fields([
-    { name: "panCard", maxCount: 1 },
-    { name: "gstCertificate", maxCount: 1 },
-    { name: "fssaiLicense", maxCount: 1 }
-  ]),
-  handlePartnerDocumentUploadError,
+  maybePartnerDocumentUpload,
   controller.registerPartner
 )
 
@@ -68,6 +81,43 @@ router.post(
  *         description: Account pending approval or rejected
  */
 router.post('/login', controller.loginPartner)
+
+/**
+ * @swagger
+ * /api/partner/verification:
+ *   get:
+ *     summary: Get the logged-in partner's verification status
+ *     description: Works with a verification-scope token (pending/rejected). Returns a full-access token + hotels once approved.
+ *     tags: [Partner]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Verification status fetched successfully
+ */
+router.get('/verification', verificationAuth, controller.getVerificationStatus)
+
+/**
+ * @swagger
+ * /api/partner/documents:
+ *   patch:
+ *     summary: Resubmit verification documents (pending/rejected partners)
+ *     description: Accepts multipart/form-data (web) or base64 JSON (native). Resets approval to PENDING.
+ *     tags: [Partner]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Documents resubmitted successfully
+ *       409:
+ *         description: Approved partners cannot resubmit documents
+ */
+router.patch(
+  '/documents',
+  verificationAuth,
+  maybePartnerDocumentUpload,
+  controller.resubmitPartnerDocuments
+)
 
 /**
  * @swagger

@@ -12,6 +12,17 @@ module.exports = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.ACCESS_SECRET);
+
+    // Verification-scope tokens may only reach the verification/resubmit routes.
+    // Legacy tokens without a scope claim are treated as FULL for backward compat.
+    if (decoded.scope && decoded.scope !== "FULL") {
+      return res.status(403).json({
+        message: "Your partner account is pending admin approval.",
+        code: "ACCOUNT_PENDING_APPROVAL",
+        approvalStatus: "PENDING"
+      });
+    }
+
     const partner = await Partner.findById(decoded.id).select(
       "approvalStatus rejectionReason status isActive ownerPartner kitchenName ownerName email phone address latitude longitude"
     );
