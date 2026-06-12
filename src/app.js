@@ -16,11 +16,9 @@ const app = express();
 /* -------------------------------------------------------------------------- */
 
 app.use(cors());
-// Partners sometimes send menu images as JSON/base64 payloads from the admin app.
-// Keep the global limit high enough for those requests while still preventing
-// excessively large bodies from being accepted by default.
-app.use(express.json({ limit: "15mb" }));
-app.use(express.urlencoded({ extended: true, limit: "15mb" }));
+// Driver complete-order sends base64 JSON from mobile; keep headroom above compressed payloads.
+app.use(express.json({ limit: "20mb" }));
+app.use(express.urlencoded({ extended: true, limit: "20mb" }));
 app.use(morgan("dev"));
 app.use(helmet());
 app.use(compression());
@@ -149,7 +147,9 @@ app.use((err, req, res, next) => {
 
   if (err.type === "entity.too.large") {
     return res.status(413).json({
-      message: "Request body is too large. Please upload a smaller image or send it as multipart/form-data."
+      message: "Request body is too large. Delivery proof images are compressed on upload — retry Mark delivered.",
+      code: "PAYLOAD_TOO_LARGE",
+      debugId: req.completeOrderDebugId
     });
   }
 
