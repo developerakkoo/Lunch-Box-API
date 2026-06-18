@@ -83,6 +83,17 @@ const userSchema = new mongoose.Schema(
       default: false
     },
 
+    supportPresence: {
+      isOnline: {
+        type: Boolean,
+        default: false
+      },
+      lastSeenAt: {
+        type: Date,
+        default: null
+      }
+    },
+
     refreshToken: String
   },
   { timestamps: true }

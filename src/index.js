@@ -6,6 +6,7 @@ const { initSocket } = require("./socket/socket");
 const { orderSocketHandler } = require("./socket/order.socket");
 const { initDeliveryTrackingSocket } = require("./socket/deliveryTracking.socket");
 const { initSubscriptionSchedulers } = require("./jobs/subscriptionScheduler");
+const { supportSocketHandler } = require("./socket/support.socket");
 
 const PORT = process.env.PORT || 8000;
 
@@ -15,6 +16,7 @@ const io = initSocket(server);
 global.io = io;
 initDeliveryTrackingSocket(io);
 orderSocketHandler();
+supportSocketHandler();
 
 connectDB().then(() => {
   initSubscriptionSchedulers();

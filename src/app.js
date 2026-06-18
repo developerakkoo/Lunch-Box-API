@@ -79,6 +79,7 @@ const adminDriverRoutes = require("./routes/admin/driver.routes");
 const adminUserRoutes = require("./routes/admin/user.routes");
 const adminSubscriptionRoutes = require("./routes/admin/subscription.routes");
 const adminNotificationRoutes = require("./routes/admin/notification.routes");
+const adminSupportRoutes = require("./routes/admin/support.routes");
 const adminSettingsRoutes = require("./routes/admin/settings.routes");
 
 /* -------------------------------------------------------------------------- */
@@ -119,6 +120,7 @@ app.use("/api/admin", adminOrderRoutes);
 app.use("/api/admin", adminUserRoutes);
 app.use("/api/admin", adminSubscriptionRoutes);
 app.use("/api/admin", adminNotificationRoutes);
+app.use("/api/admin", adminSupportRoutes);
 app.use("/api/admin", adminSettingsRoutes);
 
 /* -------------------------------------------------------------------------- */

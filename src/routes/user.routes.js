@@ -623,4 +623,19 @@ router.post(
   subscriptionController.downgradeSubscription
 );
 
+const supportController = require("../controller/user/support.controller");
+
+router.post("/support/tickets", auth, supportController.createTicket);
+router.get("/support/tickets", auth, supportController.listTickets);
+router.get("/support/tickets/:id", auth, supportController.getTicket);
+router.get("/support/tickets/:id/messages", auth, supportController.getMessages);
+router.post("/support/tickets/:id/messages", auth, supportController.sendMessage);
+router.patch("/support/tickets/:id/resolve", auth, supportController.resolveTicket);
+router.post("/support/tickets/:id/rating", auth, supportController.submitRating);
+router.patch("/support/tickets/:id/read", auth, supportController.markTicketRead);
+
+router.get("/notifications", auth, supportController.getNotifications);
+router.patch("/notifications/:id/read", auth, supportController.markNotificationRead);
+router.patch("/notifications/read-all", auth, supportController.markAllNotificationsRead);
+
 module.exports = router;

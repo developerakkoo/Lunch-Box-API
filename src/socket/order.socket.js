@@ -22,6 +22,7 @@ const {
   publishOrderEvent,
   removeDriverReadyOrder
 } = require("../utils/orderEvents");
+const { setUserOnline } = require("../utils/supportPresence");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -164,6 +165,7 @@ const orderSocketHandler = () => {
       }
       socket.join(`user_${userId}`);
       logger.info("User joined room", { socketId: socket.id, userId });
+      await setUserOnline(userId);
       callback && callback({ status: "ok" });
     });
 
