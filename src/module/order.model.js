@@ -25,6 +25,11 @@ const orderSchema = new mongoose.Schema(
       default: null,
     },
 
+    selfDelivery: {
+      type: Boolean,
+      default: false,
+    },
+
     orderType: {
       type: String,
       enum: ["INSTANT", "SUBSCRIPTION"],

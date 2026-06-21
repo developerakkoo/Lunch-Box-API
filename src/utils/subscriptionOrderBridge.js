@@ -4,7 +4,9 @@ const User = require("../module/user.model");
 const MenuItem = require("../module/menuItem.model");
 const SubscriptionDelivery = require("../module/subscriptionDelivery.model");
 const UserSubscription = require("../module/userSubscription.model");
+const Partner = require("../module/partner.model");
 const assignDeliveryBoy = require("./deliveryAssignment");
+const { isSelfDeliveryOrder } = require("./selfDelivery");
 const { publishOrderEvent } = require("./orderEvents");
 const logger = require("./logger");
 
@@ -74,9 +76,12 @@ async function materializeOrderFromSubscriptionDelivery(deliveryId) {
 
   const now = new Date();
 
+  const partnerDoc = await Partner.findById(partnerId).select("selfDelivery").lean();
+
   const order = await Order.create({
     user: userId,
     partner: partnerId,
+    selfDelivery: partnerDoc?.selfDelivery === true,
     deliveryAgent: null,
     orderType: "SUBSCRIPTION",
     subscriptionDeliveryId: deliveryDoc._id,
@@ -135,7 +140,9 @@ async function materializeOrderFromSubscriptionDelivery(deliveryId) {
   });
 
   try {
-    await assignDeliveryBoy(order);
+    if (!isSelfDeliveryOrder(order)) {
+      await assignDeliveryBoy(order);
+    }
   } catch (e) {
     logger.warn("assignDeliveryBoy failed for subscription order", {
       orderId: order._id,

@@ -18,26 +18,24 @@ const {
   normalizePaymentMethod,
   resolveOrderAddress
 } = require("../utils/orderRequest");
+const {
+  buildOrderStatusPayload,
+} = require("../constants/orderStatus");
 const mongoose = require("mongoose");
 const DELIVERY_CHARGE = 40;
 const TAX_RATE = 0.05;
 
-const CUSTOMER_STATUS = {
-  PLACED: "ORDER_RECEIVED",
-  ACCEPTED: "ACCEPTED",
-  PREPARING: "PROCESSING",
-  READY: "READY_FOR_PICKUP",
-  OUT_FOR_DELIVERY: "ON_ROUTE",
-  DELIVERED: "DELIVERED",
-  CANCELLED: "CANCELLED"
-};
-
-const emitOrderStatusUpdate = (order, customerStatus) => {
+const emitOrderStatusUpdate = (order) => {
+  const payload = buildOrderStatusPayload(order);
   global.io?.to(`user_${order.user}`).emit("order_status_update", {
     orderId: order._id,
-    status: customerStatus,
+    status: payload.displayStatus,
     internalStatus: order.status,
-    timeline: order.timeline
+    timeline: order.timeline,
+    title: payload.title,
+    subtitle: payload.subtitle,
+    progressIndex: payload.progressIndex,
+    selfDelivery: payload.selfDelivery,
   });
 };
 
@@ -48,8 +46,7 @@ const apiError = (res, status, code, message, details) =>
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 const getActorIdFromReq = (req) => req?.user?.id || req?.partner?.id || req?.driver?.id;
-const emitCustomerStatusFromOrder = (order) =>
-  emitOrderStatusUpdate(order, CUSTOMER_STATUS[order.status] || order.status);
+const emitCustomerStatusFromOrder = (order) => emitOrderStatusUpdate(order);
 
 const getActorRole = async (actorId) => {
   if (!isValidObjectId(actorId)) return null;
@@ -147,9 +144,12 @@ exports.createOrder = async (req, res) => {
     const deliveryCharge = itemTotal > 0 ? DELIVERY_CHARGE : 0;
     const totalAmount = itemTotal + tax + deliveryCharge;
 
+    const partnerDoc = await Partner.findById(cart.kitchenId).select("selfDelivery");
+
     const orderData = {
       user: userId,
       partner: cart.kitchenId,
+      selfDelivery: partnerDoc?.selfDelivery === true,
       idempotencyKey,
       items: cart.items.map((item) => ({
         menuItem: item.productId,
@@ -259,8 +259,8 @@ exports.kitchenAction = async (req, res) => {
     if (!isValidObjectId(orderId)) {
       return apiError(res, 400, "INVALID_ORDER_ID", "orderId must be a valid id");
     }
-    if (!["ACCEPT", "PREPARING", "READY", "REJECT"].includes(action)) {
-      return apiError(res, 400, "INVALID_ACTION", "action must be ACCEPT, PREPARING, READY or REJECT");
+    if (!["ACCEPT", "PREPARING", "READY", "REJECT", "DISPATCH", "DELIVERED"].includes(action)) {
+      return apiError(res, 400, "INVALID_ACTION", "action must be ACCEPT, PREPARING, READY, REJECT, DISPATCH or DELIVERED");
     }
 
     const order = await Order.findById(orderId);
@@ -331,12 +331,49 @@ exports.kitchenAction = async (req, res) => {
         order
       });
 
-      if (!order.deliveryAgent && typeof assignDeliveryBoy === "function") {
+      if (!order.selfDelivery && !order.deliveryAgent && typeof assignDeliveryBoy === "function") {
         await assignDeliveryBoy(order);
-      } else if (order.deliveryAgent) {
+      } else if (order.deliveryAgent && !order.selfDelivery) {
         await clearDriverAssignment(order.deliveryAgent);
       }
-    } else {
+    } else if (action === "DISPATCH") {
+      if (!order.selfDelivery) {
+        return apiError(res, 409, "INVALID_ACTION", "DISPATCH is only available for self-delivery orders");
+      }
+      if (order.deliveryAgent) {
+        return apiError(res, 409, "INVALID_ORDER_STATE", "Self-delivery orders cannot have a platform driver assigned");
+      }
+      if (order.status !== "READY") {
+        return apiError(res, 409, "INVALID_ORDER_STATE", "Only ready orders can be dispatched");
+      }
+      order.status = "OUT_FOR_DELIVERY";
+      order.timeline.pickedAt = new Date();
+      await order.save();
+      logger.info("HTTP kitchen dispatched self-delivery order", { orderId: order._id });
+      global.io?.to(`user_${order.user}`).emit("order_out_for_delivery", order);
+      emitCustomerStatusFromOrder(order);
+      await publishOrderEvent({
+        type: "ORDER_PICKED",
+        order,
+      });
+    } else if (action === "DELIVERED") {
+      if (!order.selfDelivery) {
+        return apiError(res, 409, "INVALID_ACTION", "DELIVERED action is only available for self-delivery orders");
+      }
+      if (order.status !== "OUT_FOR_DELIVERY") {
+        return apiError(res, 409, "INVALID_ORDER_STATE", "Only out-for-delivery orders can be marked delivered");
+      }
+      order.status = "DELIVERED";
+      order.timeline.deliveredAt = new Date();
+      await order.save();
+      logger.info("HTTP kitchen marked self-delivery order delivered", { orderId: order._id });
+      global.io?.to(`user_${order.user}`).emit("order_delivered", order);
+      emitCustomerStatusFromOrder(order);
+      await publishOrderEvent({
+        type: "ORDER_DELIVERED",
+        order,
+      });
+    } else if (action === "REJECT") {
       if (!["PLACED", "ACCEPTED", "PREPARING", "READY"].includes(order.status)) {
         return apiError(res, 409, "INVALID_ORDER_STATE", "Order cannot be rejected at current status");
       }

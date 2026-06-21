@@ -153,6 +153,7 @@ const options = {
             latitude: { type: "number", example: 18.5204 },
             longitude: { type: "number", example: 73.8567 },
             gstApplicable: { type: "boolean", example: false },
+            selfDelivery: { type: "boolean", example: false },
             panCard: { type: "string", format: "binary" },
             gstCertificate: { type: "string", format: "binary" },
             fssaiLicense: { type: "string", format: "binary" }

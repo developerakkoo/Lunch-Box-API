@@ -5,6 +5,7 @@ const UserSubscription = require("../../module/userSubscription.model");
 const SubscriptionDelivery = require("../../module/subscriptionDelivery.model");
 const Order = require("../../module/order.model");
 const DeliveryAgent = require("../../module/Delivery_Agent");
+const { isSelfDeliveryOrder } = require("../../utils/selfDelivery");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -159,6 +160,15 @@ exports.updateSubscriptionDelivery = async (req, res) => {
     }
 
     if (patchDriver) {
+      if (delivery.linkedOrderId) {
+        const linkedOrder = await Order.findById(delivery.linkedOrderId).select("selfDelivery");
+        if (linkedOrder && isSelfDeliveryOrder(linkedOrder)) {
+          return res.status(409).json({
+            message: "This delivery uses restaurant self-delivery",
+          });
+        }
+      }
+
       if (deliveryBoyId === null || deliveryBoyId === "") {
         delivery.deliveryBoyId = null;
       } else {

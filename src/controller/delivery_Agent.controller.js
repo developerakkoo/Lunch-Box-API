@@ -15,6 +15,7 @@ const {
   emitOrderDelivered
 } = require("../socket/order.socket");
 const { notifyDeliveryAgent } = require("../utils/deliveryNotification");
+const { isSelfDeliveryOrder } = require("../utils/selfDelivery");
 const {
   acquireOrderLock,
   clearDriverAssignment,
@@ -488,9 +489,9 @@ exports.getOrdersByDeliveryStatus = async (req, res) => {
       ? {
           status: { $in: statuses },
           $or: [
-            { deliveryAgent: null },
-            { deliveryAgent: agent._id }
-          ]
+            { deliveryAgent: agent._id },
+            { deliveryAgent: null, selfDelivery: { $ne: true } },
+          ],
         }
       : {
           deliveryAgent: agent._id,
@@ -534,7 +535,8 @@ exports.getOrderDetails = async (req, res) => {
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     const assignedToMe = order.deliveryAgent && String(order.deliveryAgent) === String(agent._id);
-    const availablePoolOrder = order.status === "READY" && !order.deliveryAgent;
+    const availablePoolOrder =
+      order.status === "READY" && !order.deliveryAgent && !isSelfDeliveryOrder(order);
     if (!assignedToMe && !availablePoolOrder) {
       return res.status(403).json({ message: "Order is not available to this delivery agent" });
     }
@@ -561,6 +563,9 @@ exports.acceptOrder = async (req, res) => {
 
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: "Order not found" });
+    if (isSelfDeliveryOrder(order)) {
+      return res.status(409).json({ message: "This order is not available for platform delivery" });
+    }
     if (order.status !== "READY") {
       return res.status(400).json({ message: "Only ready orders can be accepted by driver" });
     }

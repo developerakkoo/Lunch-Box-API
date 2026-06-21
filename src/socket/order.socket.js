@@ -4,6 +4,7 @@ const { getIO } = require("./socket");
 const Order = require("../module/order.model");
 const Cart = require("../module/cart.model");
 const User = require("../module/user.model");
+const Partner = require("../module/partner.model");
 const DeliveryAgent = require("../module/Delivery_Agent");
 const WalletTransaction = require("../module/walletTransaction.model");
 const assignDeliveryBoy = require("../utils/deliveryAssignment");
@@ -268,9 +269,12 @@ const orderSocketHandler = () => {
           await user.save();
         }
 
+        const partnerDoc = await Partner.findById(cart.kitchenId).select("selfDelivery").lean();
+
         const order = await Order.create({
           user: userId,
           partner: cart.kitchenId,
+          selfDelivery: partnerDoc?.selfDelivery === true,
           items: cart.items.map((item) => ({
             menuItem: item.productId,
             name: item.name,
@@ -465,11 +469,46 @@ const orderSocketHandler = () => {
             type: "ORDER_READY",
             order
           });
-          if (!order.deliveryAgent) {
+          if (!order.selfDelivery && !order.deliveryAgent) {
             await assignDeliveryBoy(order);
-          } else {
+          } else if (order.deliveryAgent && !order.selfDelivery) {
             await removeDriverReadyOrder(order._id);
           }
+        } else if (action === "DISPATCH") {
+          if (!order.selfDelivery) {
+            return callback && callback({ status: "error", message: "DISPATCH is only available for self-delivery orders" });
+          }
+          if (order.deliveryAgent) {
+            return callback && callback({ status: "error", message: "Self-delivery orders cannot have a platform driver assigned" });
+          }
+          if (order.status !== "READY") {
+            return callback && callback({ status: "error", message: "Only ready orders can be dispatched" });
+          }
+          order.status = "OUT_FOR_DELIVERY";
+          order.timeline.pickedAt = new Date();
+          await order.save();
+          logger.info("Kitchen dispatched self-delivery order", { orderId: order._id, partnerId: order.partner });
+          io.to(`user_${order.user}`).emit("order_out_for_delivery", order);
+          await publishOrderEvent({
+            type: "ORDER_PICKED",
+            order,
+          });
+        } else if (action === "DELIVERED") {
+          if (!order.selfDelivery) {
+            return callback && callback({ status: "error", message: "DELIVERED action is only available for self-delivery orders" });
+          }
+          if (order.status !== "OUT_FOR_DELIVERY") {
+            return callback && callback({ status: "error", message: "Only out-for-delivery orders can be marked delivered" });
+          }
+          order.status = "DELIVERED";
+          order.timeline.deliveredAt = new Date();
+          await order.save();
+          logger.info("Kitchen marked self-delivery order delivered", { orderId: order._id, partnerId: order.partner });
+          io.to(`user_${order.user}`).emit("order_delivered", order);
+          await publishOrderEvent({
+            type: "ORDER_DELIVERED",
+            order,
+          });
         } else if (action === "REJECT") {
           order.status = "CANCELLED";
           order.timeline.cancelledAt = new Date();

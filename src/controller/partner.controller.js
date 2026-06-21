@@ -128,7 +128,8 @@ exports.registerPartner = async (req, res) => {
       address,
       latitude,
       longitude,
-      gstApplicable
+      gstApplicable,
+      selfDelivery
     } = req.body || {};
 
     const normalizedEmail = normalizeText(email).toLowerCase();
@@ -137,6 +138,7 @@ exports.registerPartner = async (req, res) => {
     const normalizedPhone = normalizeText(phone);
     const normalizedAddress = normalizeText(address);
     const resolvedGstApplicable = toBoolean(gstApplicable);
+    const resolvedSelfDelivery = toBoolean(selfDelivery);
     const parsedLatitude = parseOptionalNumber(latitude);
     const parsedLongitude = parseOptionalNumber(longitude);
     const isJson = String(req.headers["content-type"] || "").includes("application/json");
@@ -218,6 +220,7 @@ exports.registerPartner = async (req, res) => {
       latitude: parsedLatitude,
       longitude: parsedLongitude,
       gstApplicable: resolvedGstApplicable,
+      selfDelivery: resolvedSelfDelivery,
       documents,
       approvalStatus: PARTNER_APPROVAL_STATUS.PENDING,
       status: "INACTIVE",
@@ -1054,7 +1057,7 @@ exports.createHotel = async (req, res) => {
       return res.status(400).json({ message: "kitchenName is required" });
     }
 
-    const owner = await Partner.findById(req.partner.id).select("ownerName");
+    const owner = await Partner.findById(req.partner.id).select("ownerName selfDelivery");
 
     if (!owner) {
       return res.status(404).json({ message: "Partner not found" });
@@ -1070,7 +1073,8 @@ exports.createHotel = async (req, res) => {
       longitude,
       approvalStatus: PARTNER_APPROVAL_STATUS.APPROVED,
       status: "ACTIVE",
-      isActive: true
+      isActive: true,
+      selfDelivery: owner?.selfDelivery === true
     });
 
     const hotelData = hotel.toObject();

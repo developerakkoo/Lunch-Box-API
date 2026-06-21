@@ -3,7 +3,8 @@ const Order = require("../../module/order.model");
 const User = require("../../module/user.model");
 const Partner = require("../../module/partner.model");
 const DeliveryAgent = require("../../module/Delivery_Agent");
-const assignDeliveryBoy = require("../../utils/deliveryAssignment");
+const assignDeliveryBoy = require("../utils/deliveryAssignment");
+const { isSelfDeliveryOrder } = require("../utils/selfDelivery");
 const {
   clearDriverAssignment,
   publishOrderEvent,
@@ -19,6 +20,13 @@ const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 const isTruthy = (value) => value === true || value === "true" || value === 1 || value === "1";
 
 async function assignDriverToOrder(order, { deliveryAgentId, autoAssign } = {}) {
+  if (isSelfDeliveryOrder(order)) {
+    return {
+      status: 409,
+      message: "This order uses restaurant self-delivery",
+    };
+  }
+
   if (isTruthy(autoAssign)) {
     const assignedDriver = await assignDeliveryBoy(order);
     if (!assignedDriver) {

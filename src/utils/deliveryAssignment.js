@@ -1,7 +1,7 @@
 const DeliveryAgent = require("../module/Delivery_Agent");
 const Order = require("../module/order.model");
 const { notifyDeliveryAgent } = require("./deliveryNotification");
-const logger = require("./logger");
+const { isSelfDeliveryOrder } = require("./selfDelivery");
 const {
   publishOrderEvent,
   removeDriverReadyOrder,
@@ -12,6 +12,11 @@ async function assignDeliveryBoy(order) {
   logger.info("Attempting delivery assignment", { orderId: order?._id, partnerId: order?.partner });
   if (!order || order.status !== "READY") {
     logger.warn("Skipping assignment for non-ready order", { orderId: order?._id, status: order?.status });
+    return null;
+  }
+
+  if (isSelfDeliveryOrder(order)) {
+    logger.info("Skipping assignment for self-delivery order", { orderId: order._id });
     return null;
   }
 

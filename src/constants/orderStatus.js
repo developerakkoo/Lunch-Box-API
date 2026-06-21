@@ -67,6 +67,11 @@ const STATUS_META = {
   },
 };
 
+const SELF_DELIVERY_SUBTITLE_OVERRIDES = {
+  READY: "Delivery handled by the restaurant",
+  OUT_FOR_DELIVERY: "Restaurant is on the way",
+};
+
 const PROGRESS_TOTAL = 6;
 
 const PARTNER_TRANSITIONS = {
@@ -74,6 +79,11 @@ const PARTNER_TRANSITIONS = {
   ACCEPTED: ["PREPARING", "CANCELLED"],
   PREPARING: ["READY", "CANCELLED"],
   READY: ["CANCELLED"],
+};
+
+const PARTNER_SELF_DELIVERY_TRANSITIONS = {
+  READY: ["OUT_FOR_DELIVERY", "CANCELLED"],
+  OUT_FOR_DELIVERY: ["DELIVERED", "CANCELLED"],
 };
 
 const USER_CANCEL_ALLOWED = ["PLACED", "ACCEPTED", "PREPARING", "READY"];
@@ -95,8 +105,8 @@ const ADMIN_TRANSITIONS = {
 
 const CLOSED_STATUSES = ["DELIVERED", "CANCELLED"];
 
-function getStatusMeta(status) {
-  return STATUS_META[status] || {
+function getStatusMeta(status, options = {}) {
+  const base = STATUS_META[status] || {
     displayStatus: status,
     title: status,
     subtitle: "",
@@ -104,11 +114,26 @@ function getStatusMeta(status) {
     adminLabel: status,
     progressIndex: 0,
   };
+
+  if (!options.selfDelivery) {
+    return base;
+  }
+
+  const subtitleOverride = SELF_DELIVERY_SUBTITLE_OVERRIDES[status];
+  if (!subtitleOverride) {
+    return base;
+  }
+
+  return {
+    ...base,
+    subtitle: subtitleOverride,
+  };
 }
 
 function buildOrderStatusPayload(order, extra = {}) {
   const status = order?.status || "PLACED";
-  const meta = getStatusMeta(status);
+  const selfDelivery = order?.selfDelivery === true;
+  const meta = getStatusMeta(status, { selfDelivery });
   return {
     orderId: order?._id,
     internalStatus: status,
@@ -124,22 +149,35 @@ function buildOrderStatusPayload(order, extra = {}) {
     partnerId: order?.partner || null,
     userId: order?.user || null,
     orderType: order?.orderType || "INSTANT",
+    selfDelivery,
+    deliveryHandledBy: selfDelivery ? "RESTAURANT" : "PLATFORM",
     ...extra,
   };
 }
 
-function canTransition(fromStatus, toStatus, actorRole) {
+function getPartnerTransitions(order) {
+  if (order?.selfDelivery === true) {
+    return {
+      ...PARTNER_TRANSITIONS,
+      ...PARTNER_SELF_DELIVERY_TRANSITIONS,
+    };
+  }
+  return PARTNER_TRANSITIONS;
+}
+
+function canTransition(fromStatus, toStatus, actorRole, order = null) {
   if (!ORDER_STATUSES.includes(toStatus)) return false;
   if (fromStatus === toStatus) return true;
   if (CLOSED_STATUSES.includes(fromStatus)) return false;
 
   if (actorRole === "PARTNER") {
-    return (PARTNER_TRANSITIONS[fromStatus] || []).includes(toStatus);
+    return (getPartnerTransitions(order)[fromStatus] || []).includes(toStatus);
   }
   if (actorRole === "USER") {
     return toStatus === "CANCELLED" && USER_CANCEL_ALLOWED.includes(fromStatus);
   }
   if (actorRole === "DELIVERY_AGENT") {
+    if (order?.selfDelivery === true) return false;
     return (DRIVER_TRANSITIONS[fromStatus] || []).includes(toStatus);
   }
   if (actorRole === "ADMIN") {

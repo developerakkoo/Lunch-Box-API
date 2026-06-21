@@ -66,6 +66,11 @@ const partnerSchema = new mongoose.Schema(
       default: false
     },
 
+    selfDelivery: {
+      type: Boolean,
+      default: false
+    },
+
     documents: {
       panCard: {
         url: { type: String, default: "" },

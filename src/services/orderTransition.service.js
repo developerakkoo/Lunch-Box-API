@@ -35,7 +35,7 @@ async function transitionOrder({
   }
 
   const fromStatus = doc.status;
-  if (!canTransition(fromStatus, toStatus, actorRole)) {
+  if (!canTransition(fromStatus, toStatus, actorRole, doc)) {
     const err = new Error(`Cannot move order from ${fromStatus} to ${toStatus}`);
     err.statusCode = 409;
     err.code = "INVALID_ORDER_TRANSITION";
