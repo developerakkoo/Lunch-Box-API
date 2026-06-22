@@ -10,6 +10,7 @@ const {
   generateAccessToken,
   generateRefreshToken
 } = require("../utils/token.utils");
+const { PARTNER_APPROVAL_STATUS } = require("../utils/partnerApproval");
 const jwt = require("jsonwebtoken");
 const { randomBytes } = require("crypto");
 
@@ -528,7 +529,12 @@ exports.getNearbyKitchens = async (req, res) => {
 
     const filter = {
       isActive: true,
-      status: "ACTIVE"
+      status: "ACTIVE",
+      $or: [
+        { approvalStatus: PARTNER_APPROVAL_STATUS.APPROVED },
+        { approvalStatus: { $exists: false } },
+        { approvalStatus: null },
+      ],
     };
 
     if (search) {
@@ -575,16 +581,21 @@ exports.getNearbyKitchens = async (req, res) => {
     });
 
     if (hasClientLocation) {
-      mapped = mapped.filter(
-        (kitchen) => kitchen.distanceKm === null || kitchen.distanceKm <= Number(radiusKm)
-      );
-
       mapped.sort((a, b) => {
         if (a.distanceKm === null && b.distanceKm === null) return 0;
         if (a.distanceKm === null) return 1;
         if (b.distanceKm === null) return -1;
         return a.distanceKm - b.distanceKm;
       });
+
+      const withinRadius = mapped.filter(
+        (kitchen) => kitchen.distanceKm === null || kitchen.distanceKm <= Number(radiusKm)
+      );
+
+      // If nothing is within radius, still show active kitchens sorted by nearest.
+      if (withinRadius.length > 0) {
+        mapped = withinRadius;
+      }
     } else {
       mapped.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     }
