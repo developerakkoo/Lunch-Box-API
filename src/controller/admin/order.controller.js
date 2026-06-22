@@ -3,8 +3,8 @@ const Order = require("../../module/order.model");
 const User = require("../../module/user.model");
 const Partner = require("../../module/partner.model");
 const DeliveryAgent = require("../../module/Delivery_Agent");
-const assignDeliveryBoy = require("../utils/deliveryAssignment");
-const { isSelfDeliveryOrder } = require("../utils/selfDelivery");
+const assignDeliveryBoy = require("../../utils/deliveryAssignment");
+const { isSelfDeliveryOrder } = require("../../utils/selfDelivery");
 const {
   clearDriverAssignment,
   publishOrderEvent,
