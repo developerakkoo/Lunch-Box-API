@@ -44,6 +44,18 @@ const menuItemSchema = new mongoose.Schema(
       default: true
     },
 
+    stockQuantity: {
+      type: Number,
+      default: null,
+      min: 0
+    },
+
+    lowStockThreshold: {
+      type: Number,
+      default: 5,
+      min: 0
+    },
+
     category: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Category',

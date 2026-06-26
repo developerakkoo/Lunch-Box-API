@@ -83,6 +83,18 @@ const normalizeText = (value) => {
   return value.trim();
 };
 
+const startOfDay = (date = new Date()) => {
+  const result = new Date(date);
+  result.setHours(0, 0, 0, 0);
+  return result;
+};
+
+const endOfDay = (date = new Date()) => {
+  const result = new Date(date);
+  result.setHours(23, 59, 59, 999);
+  return result;
+};
+
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const buildDocumentMeta = (file) => ({
@@ -473,6 +485,9 @@ exports.getDashboardStats = async (req, res) => {
     }
 
     const partnerId = selectedHotel._id;
+    const todayStart = startOfDay();
+    const todayEnd = endOfDay();
+    const liveAlertTypes = ["NEW_ORDER", "ORDER_CANCELLED", "ORDER_UPDATED", "SUBSCRIPTION_ORDER"];
 
     /* ---------- BASIC COUNTS ---------- */
 
@@ -483,7 +498,15 @@ exports.getDashboardStats = async (req, res) => {
       totalAddonItems,
       totalNewOrders,
       totalCompletedOrders,
-      totalCancelledOrders
+      totalCancelledOrders,
+      todayNewOrders,
+      todayCompletedOrders,
+      todayCancelledOrders,
+      todaySales,
+      menuItems,
+      topSellingItemsRaw,
+      liveOrderAlerts,
+      unreadLiveAlertCount
     ] = await Promise.all([
 
       Category.countDocuments({ $or: [{ partner: partnerId }, { partner: null }] }),
@@ -507,6 +530,86 @@ exports.getDashboardStats = async (req, res) => {
       Order.countDocuments({
         partner: partnerId,
         status: "CANCELLED"
+      }),
+
+      Order.countDocuments({
+        partner: partnerId,
+        status: "PLACED",
+        "timeline.placedAt": { $gte: todayStart, $lte: todayEnd }
+      }),
+
+      Order.countDocuments({
+        partner: partnerId,
+        status: "DELIVERED",
+        "timeline.deliveredAt": { $gte: todayStart, $lte: todayEnd }
+      }),
+
+      Order.countDocuments({
+        partner: partnerId,
+        status: "CANCELLED",
+        "timeline.cancelledAt": { $gte: todayStart, $lte: todayEnd }
+      }),
+
+      Order.aggregate([
+        {
+          $match: {
+            partner: partnerId,
+            status: "DELIVERED",
+            "timeline.deliveredAt": { $gte: todayStart, $lte: todayEnd }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: "$priceDetails.totalAmount" }
+          }
+        }
+      ]),
+
+      MenuItem.find({ partner: partnerId })
+        .select("name images isAvailable stockQuantity lowStockThreshold category")
+        .populate("category", "name")
+        .lean(),
+
+      Order.aggregate([
+        {
+          $match: {
+            partner: partnerId,
+            status: "DELIVERED"
+          }
+        },
+        { $unwind: "$items" },
+        {
+          $group: {
+            _id: "$items.menuItem",
+            name: { $first: "$items.name" },
+            totalQuantity: { $sum: { $ifNull: ["$items.quantity", 0] } },
+            totalRevenue: {
+              $sum: {
+                $multiply: [
+                  { $ifNull: ["$items.price", 0] },
+                  { $ifNull: ["$items.quantity", 0] }
+                ]
+              }
+            }
+          }
+        },
+        { $sort: { totalQuantity: -1, totalRevenue: -1 } },
+        { $limit: 5 }
+      ]),
+
+      PartnerNotification.find({
+        partnerId,
+        type: { $in: liveAlertTypes }
+      })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean(),
+
+      PartnerNotification.countDocuments({
+        partnerId,
+        type: { $in: liveAlertTypes },
+        isRead: false
       })
 
     ]);
@@ -584,6 +687,62 @@ exports.getDashboardStats = async (req, res) => {
       }
     ]);
 
+    const menuItemMap = new Map(menuItems.map((item) => [String(item._id), item]));
+    const topSellingItems = topSellingItemsRaw.map((item) => {
+      const menuItem = menuItemMap.get(String(item._id));
+      return {
+        menuItemId: item._id,
+        name: menuItem?.name || item.name || "Unknown item",
+        category: menuItem?.category || null,
+        image: menuItem?.images?.[0] || null,
+        isAvailable: menuItem?.isAvailable ?? true,
+        stockQuantity: menuItem?.stockQuantity ?? null,
+        lowStockThreshold: menuItem?.lowStockThreshold ?? 5,
+        totalQuantity: item.totalQuantity || 0,
+        totalRevenue: item.totalRevenue || 0
+      };
+    });
+
+    const inventoryAlerts = menuItems.reduce(
+      (acc, item) => {
+        const stockQuantity = item.stockQuantity;
+        const threshold = Number.isFinite(item.lowStockThreshold) ? item.lowStockThreshold : 5;
+        const hasNumericStock = Number.isFinite(stockQuantity);
+
+        if (hasNumericStock && stockQuantity === 0) {
+          acc.outOfStockItems.push({
+            _id: item._id,
+            name: item.name,
+            category: item.category,
+            isAvailable: item.isAvailable,
+            stockQuantity,
+            lowStockThreshold: threshold
+          });
+        } else if (hasNumericStock && stockQuantity > 0 && stockQuantity <= threshold) {
+          acc.lowStockItems.push({
+            _id: item._id,
+            name: item.name,
+            category: item.category,
+            isAvailable: item.isAvailable,
+            stockQuantity,
+            lowStockThreshold: threshold
+          });
+        } else if (!hasNumericStock && item.isAvailable === false) {
+          acc.outOfStockItems.push({
+            _id: item._id,
+            name: item.name,
+            category: item.category,
+            isAvailable: item.isAvailable,
+            stockQuantity: null,
+            lowStockThreshold: threshold
+          });
+        }
+
+        return acc;
+      },
+      { lowStockItems: [], outOfStockItems: [] }
+    );
+
     res.json({
       hotel: selectedHotel,
       hotels,
@@ -594,8 +753,23 @@ exports.getDashboardStats = async (req, res) => {
       totalNewOrders,
       totalCompletedOrders,
       totalCancelledOrders,
+      todaySummary: {
+        newOrders: todayNewOrders,
+        completedOrders: todayCompletedOrders,
+        cancelledOrders: todayCancelledOrders,
+        totalSales: todaySales[0]?.total || 0
+      },
       totalSales: totalSales[0]?.total || 0,
       salesChart,
+      topSellingItems,
+      inventoryAlerts: {
+        totalLowStockItems: inventoryAlerts.lowStockItems.length,
+        totalOutOfStockItems: inventoryAlerts.outOfStockItems.length,
+        lowStockItems: inventoryAlerts.lowStockItems,
+        outOfStockItems: inventoryAlerts.outOfStockItems
+      },
+      liveOrderAlerts,
+      unreadLiveAlertCount,
       averageRating: Number((ratingStats[0]?.averageRating || 0).toFixed(2)),
       totalReviews: ratingStats[0]?.totalReviews || 0
     });

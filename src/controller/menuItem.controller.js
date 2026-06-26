@@ -21,6 +21,43 @@ const getMenuItemImages = (req, fallbackImages = []) => {
   return parsedImages.filter(Boolean);
 };
 
+const parseNonNegativeNumber = (value, fieldName) => {
+  if (value === undefined || value === null || value === "") {
+    return { value: undefined };
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return { error: `${fieldName} must be a non-negative number` };
+  }
+
+  return { value: parsed };
+};
+
+const normalizeInventoryPayload = (source = {}) => {
+  const payload = {};
+
+  const stockQuantityResult = parseNonNegativeNumber(source.stockQuantity, "stockQuantity");
+  if (stockQuantityResult.error) return stockQuantityResult;
+  if (stockQuantityResult.value !== undefined) {
+    payload.stockQuantity = stockQuantityResult.value;
+  }
+
+  const thresholdResult = parseNonNegativeNumber(source.lowStockThreshold, "lowStockThreshold");
+  if (thresholdResult.error) return thresholdResult;
+  if (thresholdResult.value !== undefined) {
+    payload.lowStockThreshold = thresholdResult.value;
+  }
+
+  if (source.isAvailable !== undefined) {
+    payload.isAvailable = source.isAvailable === true || source.isAvailable === "true" || source.isAvailable === 1 || source.isAvailable === "1";
+  } else if (payload.stockQuantity !== undefined) {
+    payload.isAvailable = payload.stockQuantity > 0;
+  }
+
+  return { value: payload };
+};
+
 // CREATE MENU ITEM
 exports.createMenuItem = async (req, res) => {
   try {
@@ -47,6 +84,11 @@ exports.createMenuItem = async (req, res) => {
       })
     }
 
+    const inventory = normalizeInventoryPayload(req.body);
+    if (inventory.error) {
+      return res.status(400).json({ message: inventory.error });
+    }
+
     const menu = await MenuItem.create({
       name,
       description,
@@ -55,7 +97,8 @@ exports.createMenuItem = async (req, res) => {
       images: getMenuItemImages(req, images),
       isVeg,
       category,
-      partner: selectedHotel._id
+      partner: selectedHotel._id,
+      ...inventory.value
     })
 
     res.status(201).json({
@@ -105,16 +148,25 @@ exports.bulkCreateMenuItems = async (req, res) => {
     }
 
     // Prepare data
-    const menuItems = items.map(item => ({
-      name: item.name,
-      description: item.description || '',
-      price: item.price,
-      discountPrice: item.discountPrice || 0,
-      images: parsePossiblyJsonArray(item.images || ''),
-      isVeg: item.isVeg ?? true,
-      category: item.category,
-      partner: selectedHotel._id
-    }))
+    const menuItems = [];
+    for (const item of items) {
+      const inventory = normalizeInventoryPayload(item);
+      if (inventory.error) {
+        return res.status(400).json({ message: inventory.error });
+      }
+
+      menuItems.push({
+        name: item.name,
+        description: item.description || '',
+        price: item.price,
+        discountPrice: item.discountPrice || 0,
+        images: parsePossiblyJsonArray(item.images || ''),
+        isVeg: item.isVeg ?? true,
+        category: item.category,
+        partner: selectedHotel._id,
+        ...inventory.value
+      });
+    }
 
     const result = await MenuItem.insertMany(menuItems)
 
@@ -167,6 +219,12 @@ exports.updateMenuItem = async (req, res) => {
     } else if (updatePayload.images !== undefined) {
       updatePayload.images = parsePossiblyJsonArray(updatePayload.images)
     }
+
+    const inventory = normalizeInventoryPayload(updatePayload);
+    if (inventory.error) {
+      return res.status(400).json({ message: inventory.error });
+    }
+    Object.assign(updatePayload, inventory.value);
 
     const menu = await MenuItem.findOneAndUpdate(
       { _id: id, partner: selectedHotel._id },
