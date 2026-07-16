@@ -11,6 +11,7 @@ const {
   generateRefreshToken
 } = require("../utils/token.utils");
 const { PARTNER_APPROVAL_STATUS } = require("../utils/partnerApproval");
+const { normalizeStoredAssetPath } = require("../utils/media");
 const jwt = require("jsonwebtoken");
 const { randomBytes } = require("crypto");
 
@@ -505,7 +506,10 @@ exports.getPublicCategories = async (req, res) => {
     return res.status(200).json({
       statusCode: 200,
       message: "Categories fetched successfully",
-      data: categories,
+      data: categories.map((c) => ({
+        ...c,
+        image: normalizeStoredAssetPath(c.image),
+      })),
     });
   } catch (error) {
     return res.status(500).json({
