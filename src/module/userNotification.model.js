@@ -14,6 +14,8 @@ const userNotificationSchema = new mongoose.Schema(
         "SUPPORT_NEW_REPLY",
         "SUPPORT_TICKET_UPDATE",
         "SUPPORT_RATING_REQUEST",
+        "SUBSCRIPTION",
+        "OFFER",
         "SYSTEM"
       ],
       default: "SYSTEM"

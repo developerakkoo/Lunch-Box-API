@@ -8,7 +8,47 @@ const Partner = require("../module/partner.model");
 const assignDeliveryBoy = require("./deliveryAssignment");
 const { isSelfDeliveryOrder } = require("./selfDelivery");
 const { publishOrderEvent } = require("./orderEvents");
+const { notifyUser } = require("./userNotification");
 const logger = require("./logger");
+
+/**
+ * Emits the updated delivery to the subscriber and the kitchen so both apps
+ * refresh live, and drops an inbox notification for the user.
+ */
+async function broadcastDeliveryStatusFromOrder(deliveryId, { title, message }) {
+  const delivery = await SubscriptionDelivery.findById(deliveryId)
+    .populate("userSubscriptionId")
+    .catch(() => null);
+  if (!delivery) return;
+
+  const sub = delivery.userSubscriptionId;
+  const userId = sub?.userId;
+  const partnerId = sub?.partnerId;
+
+  if (global.io) {
+    if (userId) {
+      global.io.to(`user_${userId}`).emit("subscription_delivery_update", { delivery });
+    }
+    if (partnerId) {
+      global.io.to(`kitchen_${partnerId}`).emit("subscription_delivery_update", { delivery });
+    }
+  }
+
+  if (userId && title) {
+    await notifyUser({
+      userId,
+      type: "SUBSCRIPTION",
+      title,
+      message,
+      data: {
+        type: "SUBSCRIPTION",
+        deliveryId: String(delivery._id),
+        subscriptionId: String(sub?._id || ""),
+        status: delivery.status,
+      },
+    }).catch(() => {});
+  }
+}
 
 function pickAddress(user) {
   if (!user?.addresses?.length) return null;
@@ -186,6 +226,11 @@ async function markSubscriptionDeliveryDeliveredFromOrder(order) {
     subscriptionDeliveryId: order.subscriptionDeliveryId,
     orderId: order._id,
   });
+
+  await broadcastDeliveryStatusFromOrder(order.subscriptionDeliveryId, {
+    title: "Meal delivered",
+    message: "Your subscription meal has been delivered. Enjoy!",
+  });
 }
 
 /**
@@ -201,6 +246,11 @@ async function markSubscriptionDeliveryOutForDeliveryFromOrder(order) {
       ...(order.deliveryAgent ? { deliveryBoyId: order.deliveryAgent } : {}),
     },
   }).catch(() => {});
+
+  await broadcastDeliveryStatusFromOrder(order.subscriptionDeliveryId, {
+    title: "Meal on the way",
+    message: "Your subscription meal is out for delivery.",
+  });
 }
 
 module.exports = {

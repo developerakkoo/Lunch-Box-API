@@ -3,6 +3,7 @@ const SubscriptionDelivery = require("../module/subscriptionDelivery.model");
 const UserSubscription = require("../module/userSubscription.model");
 const { getPlatformSettings } = require("./subscriptionCommission.service");
 const { logAudit } = require("./subscriptionAudit.service");
+const { notifyPartner } = require("../utils/partnerNotification");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -218,7 +219,7 @@ async function activateDueDeliveries({ targetDate } = {}) {
   );
 
   const activated = result.modifiedCount || 0;
-  if (activated > 0 && global.io) {
+  if (activated > 0) {
     const deliveries = await SubscriptionDelivery.find({
       userSubscriptionId: { $in: activeIds },
       deliveryDate: { $gte: dayStart, $lte: dayEnd },
@@ -230,11 +231,30 @@ async function activateDueDeliveries({ targetDate } = {}) {
       const pid = String(d.userSubscriptionId?.partnerId);
       if (!byPartner[pid]) byPartner[pid] = [];
       byPartner[pid].push(d);
-    }
-    for (const [partnerId, list] of Object.entries(byPartner)) {
-      for (const delivery of list) {
-        global.io.to(`kitchen_${partnerId}`).emit("new_subscription_delivery", delivery);
+
+      const userId = d.userSubscriptionId?.userId;
+      if (global.io && userId) {
+        global.io.to(`user_${userId}`).emit("subscription_delivery_update", { delivery: d });
       }
+    }
+    const dateLabel = dayStart.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+    for (const [partnerId, list] of Object.entries(byPartner)) {
+      if (global.io) {
+        for (const delivery of list) {
+          global.io.to(`kitchen_${partnerId}`).emit("new_subscription_delivery", delivery);
+        }
+      }
+      await notifyPartner({
+        partnerId,
+        type: "SUBSCRIPTION_ORDER",
+        title: "Subscription meals to accept",
+        message: `You have ${list.length} subscription meal(s) awaiting acceptance for ${dateLabel}.`,
+        data: {
+          type: "SUBSCRIPTION",
+          deliveryIds: list.map((d) => String(d._id)),
+          deliveryDate: dayStart.toISOString()
+        }
+      }).catch(() => {});
     }
   }
 

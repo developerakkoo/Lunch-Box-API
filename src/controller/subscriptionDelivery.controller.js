@@ -7,6 +7,7 @@ const {
   materializeOrderFromSubscriptionDelivery,
 } = require("../utils/subscriptionOrderBridge");
 const { isDateInPause } = require("../services/subscriptionSchedule.service");
+const { notifyUser } = require("../utils/userNotification");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -15,6 +16,36 @@ const PARTNER_ACTION_MAP = {
   REJECT: "REJECTED",
   PREPARING: "PREPARING",
   READY: "READY",
+};
+
+const formatDeliveryDate = (date) => {
+  try {
+    return new Date(date).toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+    });
+  } catch (_e) {
+    return "";
+  }
+};
+
+const USER_DELIVERY_MESSAGES = {
+  ACCEPTED: (dateLabel) => ({
+    title: "Meal accepted",
+    message: `Your subscription meal${dateLabel ? ` for ${dateLabel}` : ""} was accepted by the kitchen.`,
+  }),
+  REJECTED: (dateLabel, reason) => ({
+    title: "Meal rejected",
+    message: `Your subscription meal${dateLabel ? ` for ${dateLabel}` : ""} was rejected by the kitchen.${reason ? ` Reason: ${reason}` : ""}`,
+  }),
+  PREPARING: (dateLabel) => ({
+    title: "Meal being prepared",
+    message: `The kitchen started preparing your subscription meal${dateLabel ? ` for ${dateLabel}` : ""}.`,
+  }),
+  READY: (dateLabel) => ({
+    title: "Meal ready",
+    message: `Your subscription meal${dateLabel ? ` for ${dateLabel}` : ""} is ready and will be out for delivery soon.`,
+  }),
 };
 
 exports.partnerListDeliveries = async (req, res) => {
@@ -137,12 +168,43 @@ exports.partnerDeliveryAction = async (req, res) => {
       }
     }
 
+    const userId = sub?.userId;
+
     const io = global.io;
     if (io && partnerId) {
       io.to(`kitchen_${partnerId}`).emit("subscription_delivery_update", { delivery });
       if (["PENDING_PARTNER", "PENDING"].includes(delivery.status) || action === "ACCEPT") {
         io.to(`kitchen_${partnerId}`).emit("new_subscription_delivery", delivery);
       }
+    }
+    if (io && userId) {
+      io.to(`user_${userId}`).emit("subscription_delivery_update", { delivery });
+    }
+
+    const buildMessage = USER_DELIVERY_MESSAGES[nextStatus];
+    if (userId && buildMessage) {
+      const dateLabel = formatDeliveryDate(delivery.deliveryDate);
+      const { title, message } =
+        nextStatus === "REJECTED"
+          ? buildMessage(dateLabel, delivery.rejectionReason)
+          : buildMessage(dateLabel);
+      notifyUser({
+        userId,
+        type: "SUBSCRIPTION",
+        title,
+        message,
+        data: {
+          type: "SUBSCRIPTION",
+          deliveryId: String(delivery._id),
+          subscriptionId: String(sub?._id || ""),
+          status: delivery.status,
+        },
+      }).catch((notifyErr) => {
+        logger.error("Failed to notify user about subscription delivery", {
+          deliveryId: String(delivery._id),
+          message: notifyErr?.message,
+        });
+      });
     }
 
     return res.status(200).json({
