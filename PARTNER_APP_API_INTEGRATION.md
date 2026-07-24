@@ -191,6 +191,7 @@ Registration uploads KYC documents. Two transports are supported:
 | `latitude` | number | Yes |
 | `longitude` | number | Yes |
 | `gstApplicable` | boolean | No (default false) |
+| `images` | string[] | Yes — 1–5 kitchen/storefront photo data URLs (`data:image/...;base64,...`) or existing `/uploads/...` paths |
 
 **Body (documents):**
 
@@ -309,6 +310,7 @@ Admins manage verification from `/api/admin/kitchens`:
 | `address` | string | No |
 | `latitude` | number | No |
 | `longitude` | number | No |
+| `images` | string[] | Yes — 1–5 kitchen/storefront photo data URLs |
 
 **Success — `201 Created`**
 
@@ -324,7 +326,7 @@ Admins manage verification from `/api/admin/kitchens`:
 
 | Status | `message` |
 |--------|-----------|
-| `400` | `kitchenName is required` |
+| `400` | `kitchenName is required` / kitchen photo validation errors |
 | `404` | `Partner not found` |
 | `401` | Invalid/missing token |
 | `500` | Server error message |
@@ -562,6 +564,46 @@ Server sets `partner.status` and `partner.isActive` (`true` when `ACTIVE`).
 ```
 
 **Errors:** `404` `Partner not found`; access errors as in §3.
+
+---
+
+### 5.9b Bank details (payouts)
+
+Stored on the **owner** partner record (shared across kitchens).
+
+**GET** `/api/partner/bank-details`  
+**Auth:** Bearer
+
+**Success — `200 OK`**
+
+```json
+{
+  "message": "Bank details fetched successfully",
+  "data": {
+    "beneficiaryName": "Jane Owner",
+    "accountNumber": "123456789012",
+    "ifsc": "SBIN0001234",
+    "bankName": "State Bank of India",
+    "accountType": "SAVINGS",
+    "updatedAt": "2026-07-24T10:00:00.000Z"
+  }
+}
+```
+
+When not set: `"data": null`.
+
+**PATCH** `/api/partner/bank-details`  
+**Auth:** Bearer
+
+| Field | Type | Rules |
+|-------|------|--------|
+| `beneficiaryName` | string | Required, 2–70 chars, letters/spaces/`.`/`'` |
+| `accountNumber` | string | Required, 9–18 digits |
+| `ifsc` | string | Required, `^[A-Z]{4}0[A-Z0-9]{6}$` |
+| `bankName` | string | Required, 2–100 chars |
+| `accountType` | string | `SAVINGS` or `CURRENT` |
+
+**Success — `200 OK`** with saved `data`. **Errors:** `400` validation message; `404` partner not found.
 
 ---
 
@@ -972,6 +1014,8 @@ Register/login and some list endpoints may serialize full Mongoose `Partner` doc
 | PUT | `/api/partner/kitchen/status` |
 | GET | `/api/partner/profile` |
 | PATCH | `/api/partner/profile` |
+| GET | `/api/partner/bank-details` |
+| PATCH | `/api/partner/bank-details` |
 | GET | `/api/partner/orders/:orderId/delivery-contact` |
 | GET | `/api/partner/notifications` |
 | PATCH | `/api/partner/notifications/:notificationId/read` |

@@ -346,6 +346,36 @@ router.patch('/profile', auth, controller.updatePartnerProfile)
 
 /**
  * @swagger
+ * /api/partner/bank-details:
+ *   get:
+ *     summary: Get payout bank account details for the owner partner
+ *     tags: [Partner]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Bank details fetched (data null if not set)
+ */
+router.get('/bank-details', auth, controller.getBankDetails)
+
+/**
+ * @swagger
+ * /api/partner/bank-details:
+ *   patch:
+ *     summary: Create or update payout bank account details
+ *     tags: [Partner]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Bank details saved
+ *       400:
+ *         description: Validation error
+ */
+router.patch('/bank-details', auth, controller.updateBankDetails)
+
+/**
+ * @swagger
  * /api/partner/orders/{orderId}/delivery-contact:
  *   get:
  *     summary: Get delivery boy contact for order dial-up

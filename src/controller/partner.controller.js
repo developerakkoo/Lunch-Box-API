@@ -17,6 +17,7 @@ const {
   normalizeApprovalStatus
 } = require("../utils/partnerApproval");
 const { savePartnerBase64Document } = require("../utils/partnerDocuments.util");
+const { resolveKitchenImages } = require("../utils/partnerKitchenImages.util");
 const {
   getManagedHotels: fetchManagedHotels,
   getManagedHotelIds,
@@ -27,6 +28,58 @@ const {
 } = require("../utils/orderEvents");
 const logger = require("../utils/logger");
 // const Review = require("../module/review.model");
+
+const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+const BENEFICIARY_NAME_PATTERN = /^[A-Za-z .']{2,70}$/;
+const ACCOUNT_NUMBER_PATTERN = /^\d{9,18}$/;
+
+function normalizeBankAccountPayload(body = {}) {
+  const beneficiaryName = String(body.beneficiaryName || "").trim();
+  const accountNumber = String(body.accountNumber || "").replace(/\s+/g, "");
+  const ifsc = String(body.ifsc || "")
+    .trim()
+    .toUpperCase();
+  const bankName = String(body.bankName || "").trim();
+  const accountType = String(body.accountType || "")
+    .trim()
+    .toUpperCase();
+
+  if (!BENEFICIARY_NAME_PATTERN.test(beneficiaryName)) {
+    return {
+      error:
+        "Beneficiary name is required (2–70 characters; letters, spaces, period, apostrophe)"
+    };
+  }
+  if (!ACCOUNT_NUMBER_PATTERN.test(accountNumber)) {
+    return { error: "Account number must be 9–18 digits" };
+  }
+  if (!IFSC_PATTERN.test(ifsc)) {
+    return { error: "Enter a valid IFSC code (e.g. SBIN0001234)" };
+  }
+  if (bankName.length < 2 || bankName.length > 100) {
+    return { error: "Bank name is required (2–100 characters)" };
+  }
+  if (accountType !== "SAVINGS" && accountType !== "CURRENT") {
+    return { error: "Account type must be SAVINGS or CURRENT" };
+  }
+
+  return {
+    value: {
+      beneficiaryName,
+      accountNumber,
+      ifsc,
+      bankName,
+      accountType,
+      updatedAt: new Date()
+    }
+  };
+}
+
+async function resolveOwnerPartnerId(partnerId) {
+  const partner = await Partner.findById(partnerId).select("ownerPartner");
+  if (!partner) return null;
+  return partner.ownerPartner ? String(partner.ownerPartner) : String(partner._id);
+}
 
 const ORDER_SEGMENT_STATUS_MAP = {
   new: ["PLACED"],
@@ -189,6 +242,16 @@ exports.registerPartner = async (req, res) => {
       });
     }
 
+    let kitchenImages = [];
+    try {
+      kitchenImages = resolveKitchenImages(req.body?.images, { required: true });
+    } catch (imageErr) {
+      cleanupPartnerDocumentFiles(uploadedFiles);
+      return res.status(imageErr.statusCode || 400).json({
+        message: imageErr.message || "Invalid kitchen photos"
+      });
+    }
+
     const existing = await Partner.findOne({
       email: new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i")
     });
@@ -234,6 +297,7 @@ exports.registerPartner = async (req, res) => {
       gstApplicable: resolvedGstApplicable,
       selfDelivery: resolvedSelfDelivery,
       documents,
+      images: kitchenImages,
       approvalStatus: PARTNER_APPROVAL_STATUS.PENDING,
       status: "INACTIVE",
       isActive: false
@@ -1224,11 +1288,21 @@ exports.createHotel = async (req, res) => {
       phone,
       address,
       latitude,
-      longitude
+      longitude,
+      images
     } = req.body || {};
 
     if (!kitchenName) {
       return res.status(400).json({ message: "kitchenName is required" });
+    }
+
+    let kitchenImages = [];
+    try {
+      kitchenImages = resolveKitchenImages(images, { required: true });
+    } catch (imageErr) {
+      return res.status(imageErr.statusCode || 400).json({
+        message: imageErr.message || "Invalid kitchen photos"
+      });
     }
 
     const owner = await Partner.findById(req.partner.id).select("ownerName selfDelivery");
@@ -1245,6 +1319,7 @@ exports.createHotel = async (req, res) => {
       address,
       latitude,
       longitude,
+      images: kitchenImages,
       approvalStatus: PARTNER_APPROVAL_STATUS.APPROVED,
       status: "ACTIVE",
       isActive: true,
@@ -1260,6 +1335,89 @@ exports.createHotel = async (req, res) => {
       message: "Hotel created successfully",
       data: hotelData,
       hotels
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getBankDetails = async (req, res) => {
+  try {
+    const ownerId = await resolveOwnerPartnerId(req.partner.id);
+    if (!ownerId) {
+      return res.status(404).json({ message: "Partner not found" });
+    }
+
+    const owner = await Partner.findById(ownerId).select("bankAccount");
+    if (!owner) {
+      return res.status(404).json({ message: "Partner not found" });
+    }
+
+    const bank = owner.bankAccount;
+    const hasBank =
+      bank &&
+      bank.accountNumber &&
+      bank.ifsc &&
+      bank.beneficiaryName &&
+      bank.bankName &&
+      bank.accountType;
+
+    if (!hasBank) {
+      return res.status(200).json({
+        message: "Bank details not set",
+        data: null
+      });
+    }
+
+    return res.status(200).json({
+      message: "Bank details fetched successfully",
+      data: {
+        beneficiaryName: bank.beneficiaryName,
+        accountNumber: bank.accountNumber,
+        ifsc: bank.ifsc,
+        bankName: bank.bankName,
+        accountType: bank.accountType,
+        updatedAt: bank.updatedAt || null
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.updateBankDetails = async (req, res) => {
+  try {
+    const parsed = normalizeBankAccountPayload(req.body);
+    if (parsed.error) {
+      return res.status(400).json({ message: parsed.error });
+    }
+
+    const ownerId = await resolveOwnerPartnerId(req.partner.id);
+    if (!ownerId) {
+      return res.status(404).json({ message: "Partner not found" });
+    }
+
+    const owner = await Partner.findByIdAndUpdate(
+      ownerId,
+      { $set: { bankAccount: parsed.value } },
+      { new: true, runValidators: true }
+    ).select("bankAccount");
+
+    if (!owner) {
+      return res.status(404).json({ message: "Partner not found" });
+    }
+
+    const bank = owner.bankAccount;
+    return res.status(200).json({
+      message: "Bank details saved successfully",
+      data: {
+        beneficiaryName: bank.beneficiaryName,
+        accountNumber: bank.accountNumber,
+        ifsc: bank.ifsc,
+        bankName: bank.bankName,
+        accountType: bank.accountType,
+        updatedAt: bank.updatedAt || null
+      }
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });

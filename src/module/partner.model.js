@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const { PARTNER_APPROVAL_STATUS } = require("../utils/partnerApproval");
+const { normalizeAssetValue } = require("../utils/media");
 
 const partnerSchema = new mongoose.Schema(
   {
@@ -95,6 +96,18 @@ const partnerSchema = new mongoose.Schema(
       }
     },
 
+    /** Kitchen / storefront photos (relative upload paths). */
+    images: {
+      type: [String],
+      default: [],
+      validate: {
+        validator(v) {
+          return !v || v.length <= 5;
+        },
+        message: "A kitchen can have at most 5 photos"
+      }
+    },
+
     phone: String,
 
     address: String,
@@ -118,10 +131,30 @@ const partnerSchema = new mongoose.Schema(
       default: 0
     },
 
-    subscriptionCommissionPercent: Number
+    subscriptionCommissionPercent: Number,
+
+    /** Payout bank account on the owner partner record. */
+    bankAccount: {
+      beneficiaryName: { type: String, default: "" },
+      accountNumber: { type: String, default: "" },
+      ifsc: { type: String, default: "" },
+      bankName: { type: String, default: "" },
+      accountType: {
+        type: String,
+        enum: ["SAVINGS", "CURRENT", ""],
+        default: ""
+      },
+      updatedAt: { type: Date, default: null }
+    }
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { getters: true },
+    toObject: { getters: true }
+  }
 );
+
+partnerSchema.path("images").get(normalizeAssetValue);
 
 partnerSchema.index(
   { email: 1 },
