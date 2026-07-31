@@ -6,27 +6,18 @@ const Banner = require("../module/banner.model");
 const WalletTransaction = require("../module/walletTransaction.model");
 const { createOrder: createRazorpayOrder, verifySignature } = require("../utils/razorpay");
 const { createPaymentIntent, retrievePaymentIntent } = require("../utils/stripe");
-const {
-  generateAccessToken,
-  generateRefreshToken
-} = require("../utils/token.utils");
+const { generateAccessToken } = require("../utils/token.utils");
 const { PARTNER_APPROVAL_STATUS } = require("../utils/partnerApproval");
 const { normalizeStoredAssetPath } = require("../utils/media");
 const jwt = require("jsonwebtoken");
-const { randomBytes } = require("crypto");
 
-const REFERRAL_REWARD_REFERRER = 50;
-const REFERRAL_REWARD_NEW_USER = 25;
-
-const generateReferralCode = async (fullName = "USER") => {
-  const base = fullName.replace(/[^A-Za-z]/g, "").toUpperCase().slice(0, 4) || "USER";
-  for (let i = 0; i < 10; i += 1) {
-    const code = `${base}${randomBytes(2).toString("hex").toUpperCase()}`;
-    const exists = await User.findOne({ referralCode: code }).select("_id");
-    if (!exists) return code;
-  }
-  return `${base}${Date.now().toString().slice(-6)}`;
-};
+const {
+  REFERRAL_REWARD_REFERRER,
+  REFERRAL_REWARD_NEW_USER,
+  generateReferralCode,
+  issueUserTokens,
+  applyReferralBonuses
+} = require("../services/userAuth.service");
 
 const createWalletLedgerEntry = async ({
   userId,
@@ -58,17 +49,6 @@ const createWalletLedgerEntry = async ({
   });
 };
 
-
-const issueUserTokens = async (user) => {
-  if (!user.referralCode) {
-    user.referralCode = await generateReferralCode(user.fullName || "USER");
-  }
-  const accessToken = generateAccessToken(user);
-  const refreshToken = generateRefreshToken(user);
-  user.refreshToken = refreshToken;
-  await user.save();
-  return { accessToken, refreshToken, user };
-};
 
 /* ================= LOGIN (mobile only) ================= */
 
@@ -176,43 +156,7 @@ exports.registerUser = async (req, res) => {
       isRegistered: true,
     });
 
-    if (referrer) {
-      const referrerBefore = referrer.walletBalance || 0;
-      referrer.walletBalance = referrerBefore + REFERRAL_REWARD_REFERRER;
-      referrer.referralEarnings = (referrer.referralEarnings || 0) + REFERRAL_REWARD_REFERRER;
-      referrer.referralCount = (referrer.referralCount || 0) + 1;
-      await referrer.save();
-
-      await createWalletLedgerEntry({
-        userId: referrer._id,
-        type: "CREDIT",
-        source: "REFERRAL_BONUS",
-        amount: REFERRAL_REWARD_REFERRER,
-        balanceBefore: referrerBefore,
-        balanceAfter: referrer.walletBalance,
-        gateway: "SYSTEM",
-        referenceType: "User",
-        referenceId: user._id,
-        notes: `Referral bonus for inviting ${user.mobileNumber}`,
-      });
-
-      const newUserBefore = user.walletBalance || 0;
-      user.walletBalance = newUserBefore + REFERRAL_REWARD_NEW_USER;
-      await user.save();
-
-      await createWalletLedgerEntry({
-        userId: user._id,
-        type: "CREDIT",
-        source: "REFERRAL_BONUS",
-        amount: REFERRAL_REWARD_NEW_USER,
-        balanceBefore: newUserBefore,
-        balanceAfter: user.walletBalance,
-        gateway: "SYSTEM",
-        referenceType: "User",
-        referenceId: referrer._id,
-        notes: "Referral signup bonus",
-      });
-    }
+    await applyReferralBonuses(referrer, user);
 
     const tokens = await issueUserTokens(user);
 

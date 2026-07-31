@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const controller = require("../controller/user.controller");
+const googleAuthController = require("../controller/googleAuth.controller");
 const subscriptionController = require("../controller/subscription.controller");
 const auth = require("../middlewares/auth.middleware");
 
@@ -29,6 +30,67 @@ const auth = require("../middlewares/auth.middleware");
 router.post("/login", controller.loginUser);
 router.post("/register", controller.registerUser);
 router.post("/refresh-token", controller.refreshAccessToken);
+
+/**
+ * @swagger
+ * /api/user/google:
+ *   post:
+ *     summary: Sign in with Google (verifies a Google ID token)
+ *     tags: [User]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [idToken]
+ *             properties:
+ *               idToken:
+ *                 type: string
+ *                 description: Google ID token from the mobile app
+ *     responses:
+ *       200:
+ *         description: Login successful, or registration required with prefilled profile
+ *       401:
+ *         description: Invalid or unverified Google token
+ */
+router.post("/google", googleAuthController.googleLogin);
+
+/**
+ * @swagger
+ * /api/user/google/register:
+ *   post:
+ *     summary: Complete Google signup by attaching a mobile number
+ *     tags: [User]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [idToken, mobileNumber]
+ *             properties:
+ *               idToken:
+ *                 type: string
+ *               mobileNumber:
+ *                 type: string
+ *                 example: "9876543210"
+ *               countryCode:
+ *                 type: string
+ *                 example: "+91"
+ *               referralCode:
+ *                 type: string
+ *               fullName:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Registration successful
+ *       200:
+ *         description: Existing account linked and logged in
+ *       400:
+ *         description: Invalid mobile number or referral code
+ */
+router.post("/google/register", googleAuthController.googleRegister);
 
 /**
  * @swagger

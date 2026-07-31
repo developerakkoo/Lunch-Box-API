@@ -35,6 +35,12 @@ const userSchema = new mongoose.Schema(
     fullName: String,
     email: String,
     profileImage: String,
+
+    // Google Sign-In (unique when present)
+    googleId: {
+      type: String,
+      index: { unique: true, sparse: true }
+    },
     preferredLanguage: {
       type: String,
       default: "en"
