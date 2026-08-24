@@ -28,8 +28,14 @@ const authResponse = (res, status, message, tokens) =>
  * Throws with a client-safe message when the token is invalid.
  */
 const verifyGoogleIdToken = async (idToken) => {
-  const audience = process.env.GOOGLE_WEB_CLIENT_ID;
-  if (!audience) {
+  const audiences = [
+    process.env.GOOGLE_WEB_CLIENT_ID,
+    process.env.GOOGLE_ANDROID_CLIENT_ID
+  ]
+    .map((id) => (id || "").trim())
+    .filter(Boolean);
+
+  if (!audiences.length) {
     const err = new Error("Google Sign-In is not configured on the server");
     err.statusCode = 500;
     throw err;
@@ -37,7 +43,10 @@ const verifyGoogleIdToken = async (idToken) => {
 
   let payload;
   try {
-    const ticket = await oauthClient.verifyIdToken({ idToken, audience });
+    const ticket = await oauthClient.verifyIdToken({
+      idToken,
+      audience: audiences.length === 1 ? audiences[0] : audiences
+    });
     payload = ticket.getPayload();
   } catch (_) {
     const err = new Error("Invalid or expired Google token");
