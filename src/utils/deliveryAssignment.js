@@ -1,5 +1,6 @@
 const DeliveryAgent = require("../module/Delivery_Agent");
 const Order = require("../module/order.model");
+const logger = require("./logger");
 const { notifyDeliveryAgent } = require("./deliveryNotification");
 const { isSelfDeliveryOrder } = require("./selfDelivery");
 const {
