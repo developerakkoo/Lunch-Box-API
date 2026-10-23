@@ -80,7 +80,7 @@ const options = {
             password: { type: "string", example: "123456" },
             mobileNumber: { type: "string", example: "9876543210" },
             address: { type: "string", example: "Pune" },
-            vehicleType: { type: "string", enum: ["BIKE", "SCOOTER", "BICYCLE", "CAR"], example: "BIKE" },
+            vehicleType: { type: "string", enum: ["BIKE", "SCOOTER"], example: "BIKE" },
             vehicleNumber: { type: "string", example: "MH12AB1234" },
             vehicleModel: { type: "string", example: "Activa 6G" },
             vehicleColor: { type: "string", example: "Black" },

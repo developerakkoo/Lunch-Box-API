@@ -39,7 +39,17 @@ const DRIVER_DOCUMENT_FIELDS = ["aadhaarCard", "panCard", "drivingLicense", "veh
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const normalizeText = (value) => (typeof value === "string" ? value.trim() : "");
+const normalizeText = (value) => {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+};
+
+const parseObjectOrJson = (value, fallback = {}) => {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  return safeJsonParse(value, fallback);
+};
 
 const toBoolean = (value) => {
   if (typeof value === "boolean") return value;
@@ -158,8 +168,8 @@ exports.registerDriver = async (req, res) => {
     const password = body.password;
     const mobileNumber = normalizeText(body.mobileNumber);
     const address = normalizeText(body.address);
-    const vehicleInput = safeJsonParse(body.vehicle, {});
-    const documentsInput = safeJsonParse(body.documents, {});
+    const vehicleInput = parseObjectOrJson(body.vehicle, {});
+    const documentsInput = parseObjectOrJson(body.documents, {});
     const vehicleType = normalizeText(body.vehicleType || vehicleInput.type || vehicleInput.vehicleType).toUpperCase();
     const vehicleNumber = normalizeText(body.vehicleNumber || vehicleInput.vehicleNumber);
     const vehicleModel = normalizeText(body.vehicleModel || vehicleInput.model);
@@ -167,17 +177,24 @@ exports.registerDriver = async (req, res) => {
     const parsedDocs = getUploadedDriverFiles(req);
     const fileMap = new Map(parsedDocs.map((file) => [file.fieldName, file]));
 
-    if (!fullName || !email || !password || !mobileNumber || !address || !vehicleType) {
+    const missingFields = [];
+    if (!fullName) missingFields.push("fullName");
+    if (!email) missingFields.push("email");
+    if (!password) missingFields.push("password");
+    if (!mobileNumber) missingFields.push("mobileNumber");
+    if (!address) missingFields.push("address");
+    if (!vehicleType) missingFields.push("vehicleType");
+    if (missingFields.length) {
       cleanupDriverDocumentFiles(parsedDocs);
       return res.status(400).json({
-        message: "fullName, email, password, mobileNumber, address and vehicleType are required"
+        message: `${missingFields.join(", ")} ${missingFields.length === 1 ? "is" : "are"} required`
       });
     }
 
-    if (!["BIKE", "SCOOTER", "BICYCLE", "CAR"].includes(vehicleType)) {
+    if (!["BIKE", "SCOOTER"].includes(vehicleType)) {
       cleanupDriverDocumentFiles(parsedDocs);
       return res.status(400).json({
-        message: "vehicleType must be one of BIKE, SCOOTER, BICYCLE, CAR"
+        message: "vehicleType must be one of BIKE, SCOOTER"
       });
     }
 
@@ -194,17 +211,19 @@ exports.registerDriver = async (req, res) => {
     const drivingLicenseFile = fileMap.get("drivingLicense");
     const vehicleRcFile = fileMap.get("vehicleRc");
 
+    const uploadedDocMap = {
+      aadhaarCard: aadhaarFile,
+      panCard: panFile,
+      drivingLicense: drivingLicenseFile,
+      vehicleRc: vehicleRcFile
+    };
     const missing = requireDriverDocuments({
       vehicleType,
-      docs: {
-        aadhaarCard: aadhaarFile,
-        panCard: panFile,
-        drivingLicense: drivingLicenseFile,
-        vehicleRc: vehicleRcFile
-      }
+      docs: uploadedDocMap
     });
-
-    if (missing.length) {
+    // Documents are optional at signup (schema allows empty KYC). Only enforce
+    // the full set when the client already started uploading files.
+    if (parsedDocs.length && missing.length) {
       cleanupDriverDocumentFiles(parsedDocs);
       return res.status(400).json({
         message: `Missing required documents: ${missing.join(", ")}`
@@ -212,9 +231,9 @@ exports.registerDriver = async (req, res) => {
     }
 
     const documents = {
-      aadhaarCard: buildDocumentMeta(aadhaarFile),
-      panCard: buildDocumentMeta(panFile),
-      vehicleRc: buildDocumentMeta(vehicleRcFile),
+      aadhaarCard: aadhaarFile ? buildDocumentMeta(aadhaarFile) : undefined,
+      panCard: panFile ? buildDocumentMeta(panFile) : undefined,
+      vehicleRc: vehicleRcFile ? buildDocumentMeta(vehicleRcFile) : undefined,
       aadhaarNumber: normalizeText(documentsInput.aadhaarNumber || ""),
       panNumber: normalizeText(documentsInput.panNumber || ""),
       licenseNumber: normalizeText(documentsInput.licenseNumber || ""),
@@ -242,7 +261,7 @@ exports.registerDriver = async (req, res) => {
         color: vehicleColor || undefined
       },
       documents,
-      profileCompleted: true,
+      profileCompleted: missing.length === 0,
       status: "PENDING",
     });
 

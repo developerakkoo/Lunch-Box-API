@@ -120,6 +120,42 @@ async function resumeSubscription(subscriptionId, userId) {
   return sub;
 }
 
+const DEFAULT_MEAL_HOURS = {
+  BREAKFAST: 8,
+  LUNCH: 12,
+  DINNER: 19,
+  CUSTOM: 12
+};
+
+/**
+ * Resolves the actual moment a delivery is expected, since `deliveryDate` is
+ * stored at midnight. Tries to parse a start time out of the free-text
+ * `timeSlot` (e.g. "12:00-13:00", "7 PM"); falls back to a nominal hour per
+ * meal type so cutoff checks compare against mealtime instead of 00:00.
+ */
+function resolveDeliveryMoment(delivery) {
+  const moment = new Date(delivery.deliveryDate);
+  let hours = DEFAULT_MEAL_HOURS[delivery.mealType] ?? 12;
+  let minutes = 0;
+
+  const slot = typeof delivery.timeSlot === "string" ? delivery.timeSlot.trim() : "";
+  const match = slot.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+  if (match) {
+    let h = Number(match[1]);
+    const m = Number(match[2] || 0);
+    const meridiem = (match[3] || "").toLowerCase();
+    if (meridiem === "pm" && h < 12) h += 12;
+    if (meridiem === "am" && h === 12) h = 0;
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+      hours = h;
+      minutes = m;
+    }
+  }
+
+  moment.setHours(hours, minutes, 0, 0);
+  return moment;
+}
+
 async function skipDelivery(subscriptionId, userId, deliveryId) {
   const sub = await UserSubscription.findOne({ _id: subscriptionId, userId });
   if (!sub) throw new Error("Subscription not found");
@@ -138,7 +174,9 @@ async function skipDelivery(subscriptionId, userId, deliveryId) {
   const settings = await getPlatformSettings();
   const cutoffHours = plan?.skipCutoffHours ?? settings.defaultSkipCutoffHours ?? 12;
   const cutoffMs = cutoffHours * 60 * 60 * 1000;
-  if (delivery.deliveryDate.getTime() - Date.now() < cutoffMs) {
+  // Compare against the expected mealtime, not midnight of the delivery date.
+  const deliveryMoment = resolveDeliveryMoment(delivery);
+  if (deliveryMoment.getTime() - Date.now() < cutoffMs) {
     throw new Error(`Skip must be at least ${cutoffHours} hours before delivery`);
   }
 

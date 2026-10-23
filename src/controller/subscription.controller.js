@@ -368,19 +368,20 @@ exports.confirmSubscriptionPayment = async (req, res) => {
 exports.pauseSubscription = async (req, res) => {
   try {
     const sub = await pauseSubscription(req.params.subscriptionId, req.user.id, req.body);
+    // Notifications must never fail the main operation.
     await notifyUserSubscriptionEvent(req.user.id, {
       title: "Subscription paused",
       message: "Your meal plan has been paused. Deliveries are on hold.",
       type: "PAUSED",
       data: { subscriptionId: String(sub._id) }
-    });
+    }).catch(() => {});
     if (sub.partnerId) {
       await notifyPartnerSubscription(sub.partnerId, {
         title: "Subscription paused",
         message: "A subscriber paused their meal plan.",
         type: "PAUSED",
         data: { subscriptionId: String(sub._id) }
-      });
+      }).catch(() => {});
     }
     return res.status(200).json({ message: "Subscription paused", data: sub });
   } catch (error) {
@@ -396,14 +397,14 @@ exports.resumeSubscription = async (req, res) => {
       message: "Your meal plan is active again. Deliveries will continue.",
       type: "RESUMED",
       data: { subscriptionId: String(sub._id) }
-    });
+    }).catch(() => {});
     if (sub.partnerId) {
       await notifyPartnerSubscription(sub.partnerId, {
         title: "Subscription resumed",
         message: "A subscriber resumed their meal plan.",
         type: "RESUMED",
         data: { subscriptionId: String(sub._id) }
-      });
+      }).catch(() => {});
     }
     return res.status(200).json({ message: "Subscription resumed", data: sub });
   } catch (error) {
@@ -418,7 +419,9 @@ exports.skipDelivery = async (req, res) => {
       req.user.id,
       req.params.deliveryId
     );
-    const sub = await UserSubscription.findById(req.params.subscriptionId).select("partnerId");
+    const sub = await UserSubscription.findById(req.params.subscriptionId)
+      .select("partnerId")
+      .catch(() => null);
     if (sub?.partnerId) {
       await notifyPartnerSubscription(sub.partnerId, {
         title: "Meal skipped",
@@ -428,7 +431,7 @@ exports.skipDelivery = async (req, res) => {
           subscriptionId: String(req.params.subscriptionId),
           deliveryId: String(req.params.deliveryId)
         }
-      });
+      }).catch(() => {});
     }
     return res.status(200).json({ message: "Meal skipped", data: result });
   } catch (error) {
@@ -461,14 +464,14 @@ exports.cancelSubscription = async (req, res) => {
         : "Your meal plan was cancelled.",
       type: "CANCELLED",
       data: { subscriptionId: String(req.params.subscriptionId) }
-    });
+    }).catch(() => {});
     if (data?.partnerId) {
       await notifyPartnerSubscription(data.partnerId, {
         title: "Subscription cancelled",
         message: "A subscriber cancelled their meal plan.",
         type: "CANCELLED",
         data: { subscriptionId: String(req.params.subscriptionId) }
-      });
+      }).catch(() => {});
     }
     return res.status(200).json({
       message: refund?.netRefund
