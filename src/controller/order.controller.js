@@ -21,6 +21,10 @@ const {
 const {
   buildOrderStatusPayload,
 } = require("../constants/orderStatus");
+const {
+  RatingError,
+  submitOrderRating
+} = require("../services/orderRating.service");
 const mongoose = require("mongoose");
 const DELIVERY_CHARGE = 40;
 const TAX_RATE = 0.05;
@@ -767,48 +771,22 @@ exports.rateOrder = async (req, res) => {
       return apiError(res, 404, "ORDER_NOT_FOUND", "Order not found");
     }
 
-    if (order.status !== "DELIVERED") {
-      return apiError(res, 409, "INVALID_ORDER_STATE", "Only delivered orders can be rated");
-    }
-
-    if (partnerRating !== undefined) {
-      if (Number(partnerRating) < 1 || Number(partnerRating) > 5) {
-        return apiError(res, 400, "INVALID_PARTNER_RATING", "partnerRating must be between 1 and 5");
-      }
-      order.rating.partnerRating = Number(partnerRating);
-    }
-
-    if (deliveryRating !== undefined) {
-      if (Number(deliveryRating) < 1 || Number(deliveryRating) > 5) {
-        return apiError(res, 400, "INVALID_DELIVERY_RATING", "deliveryRating must be between 1 and 5");
-      }
-      order.rating.deliveryRating = Number(deliveryRating);
-
-      if (order.deliveryAgent) {
-        const agent = await DeliveryAgent.findById(order.deliveryAgent);
-        if (agent) {
-          const prevAvg = agent.rating?.averageRating || 0;
-          const prevCount = agent.rating?.totalRatings || 0;
-          const nextCount = prevCount + 1;
-          const nextAvg = ((prevAvg * prevCount) + Number(deliveryRating)) / nextCount;
-          agent.rating.averageRating = Number(nextAvg.toFixed(2));
-          agent.rating.totalRatings = nextCount;
-          await agent.save();
-        }
-      }
-    }
-
-    if (review !== undefined) {
-      order.rating.review = review;
-    }
-
-    await order.save();
+    const result = await submitOrderRating({
+      order,
+      partnerRating,
+      deliveryRating,
+      review
+    });
 
     return res.status(200).json({
       message: "Order rating submitted successfully",
-      data: order.rating
+      data: result.rating,
+      ratingSummary: result.ratingSummary
     });
   } catch (error) {
+    if (error instanceof RatingError) {
+      return apiError(res, error.status, error.code, error.message);
+    }
     return apiError(res, 500, "RATE_ORDER_FAILED", error.message);
   }
 };

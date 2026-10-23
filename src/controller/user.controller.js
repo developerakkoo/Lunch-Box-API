@@ -8,6 +8,10 @@ const { createOrder: createRazorpayOrder, verifySignature } = require("../utils/
 const { createPaymentIntent, retrievePaymentIntent } = require("../utils/stripe");
 const { generateAccessToken } = require("../utils/token.utils");
 const { PARTNER_APPROVAL_STATUS } = require("../utils/partnerApproval");
+const {
+  presentRatingSummary,
+  listKitchenReviews
+} = require("../services/orderRating.service");
 const { normalizeStoredAssetPath } = require("../utils/media");
 const jwt = require("jsonwebtoken");
 
@@ -498,7 +502,7 @@ exports.getNearbyKitchens = async (req, res) => {
     }
 
     const kitchens = await Partner.find(filter)
-      .select("kitchenName ownerName address latitude longitude isActive status createdAt")
+      .select("kitchenName ownerName address latitude longitude isActive status ratingSummary createdAt")
       .lean();
 
     const hasClientLocation =
@@ -508,9 +512,16 @@ exports.getNearbyKitchens = async (req, res) => {
       !Number.isNaN(Number(longitude));
 
     let mapped = kitchens.map((kitchen) => {
+      const ratingSummary = presentRatingSummary(kitchen.ratingSummary);
+      const withRating = {
+        ...kitchen,
+        averageRating: ratingSummary.averageRating,
+        totalReviews: ratingSummary.totalReviews,
+        ratingSummary
+      };
       if (!hasClientLocation || kitchen.latitude === undefined || kitchen.longitude === undefined) {
         return {
-          ...kitchen,
+          ...withRating,
           distanceKm: null
         };
       }
@@ -523,7 +534,7 @@ exports.getNearbyKitchens = async (req, res) => {
       );
 
       return {
-        ...kitchen,
+        ...withRating,
         distanceKm: Number(distanceKm.toFixed(2))
       };
     });
@@ -575,11 +586,13 @@ exports.getKitchenMenuForCustomer = async (req, res) => {
       _id: kitchenId,
       isActive: true,
       status: "ACTIVE"
-    }).select("kitchenName ownerName address latitude longitude");
+    }).select("kitchenName ownerName address latitude longitude status ratingSummary");
 
     if (!kitchen) {
       return res.status(404).json({ message: "Kitchen not found" });
     }
+
+    const ratingSummary = presentRatingSummary(kitchen.ratingSummary);
 
     const categories = await Category.find({
       $or: [{ partner: kitchenId }, { partner: null }]
@@ -600,12 +613,36 @@ exports.getKitchenMenuForCustomer = async (req, res) => {
     return res.json({
       message: "Kitchen menu fetched successfully",
       data: {
-        kitchen,
+        kitchen: {
+          ...kitchen.toObject(),
+          averageRating: ratingSummary.averageRating,
+          totalReviews: ratingSummary.totalReviews,
+          ratingSummary
+        },
         categories,
         items
       }
     });
   } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getKitchenReviews = async (req, res) => {
+  try {
+    const data = await listKitchenReviews({
+      kitchenId: req.params.kitchenId,
+      page: req.query.page,
+      limit: req.query.limit
+    });
+    return res.json({
+      message: "Kitchen reviews fetched successfully",
+      ...data
+    });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message, code: error.code });
+    }
     return res.status(500).json({ message: error.message });
   }
 };

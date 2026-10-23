@@ -189,6 +189,33 @@ router.get('/dashboard', auth, controller.getDashboardStats)
 
 /**
  * @swagger
+ * /api/partner/reviews:
+ *   get:
+ *     summary: Recent customer reviews for the selected kitchen
+ *     tags: [Partner]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: hotelId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: number
+ *     responses:
+ *       200:
+ *         description: Reviews fetched successfully
+ */
+router.get('/reviews', auth, controller.getPartnerReviews)
+
+/**
+ * @swagger
  * /api/partner/orders:
  *   get:
  *     summary: List kitchen orders by segment (or legacy status)

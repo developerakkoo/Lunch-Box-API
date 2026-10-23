@@ -223,6 +223,8 @@ const orderSchema = new mongoose.Schema(
       partnerRating: Number,
       deliveryRating: Number,
       review: String,
+      ratedAt: Date,
+      updatedAt: Date,
     },
 
     tip: {
@@ -249,6 +251,7 @@ const orderSchema = new mongoose.Schema(
 );
 
 orderSchema.index({ partner: 1, status: 1, createdAt: -1 });
+orderSchema.index({ partner: 1, "rating.partnerRating": 1, "rating.ratedAt": -1 });
 orderSchema.index({ user: 1, createdAt: -1 });
 orderSchema.index({ deliveryAgent: 1, status: 1 });
 orderSchema.index({ status: 1, createdAt: -1 });

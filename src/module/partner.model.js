@@ -131,6 +131,24 @@ const partnerSchema = new mongoose.Schema(
       default: 0
     },
 
+    ratingSummary: {
+      averageRating: {
+        type: Number,
+        default: 0
+      },
+      totalReviews: {
+        type: Number,
+        default: 0
+      },
+      distribution: {
+        1: { type: Number, default: 0 },
+        2: { type: Number, default: 0 },
+        3: { type: Number, default: 0 },
+        4: { type: Number, default: 0 },
+        5: { type: Number, default: 0 }
+      }
+    },
+
     subscriptionCommissionPercent: Number,
 
     /** Payout bank account on the owner partner record. */

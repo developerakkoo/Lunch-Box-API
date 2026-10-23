@@ -27,7 +27,10 @@ const {
   setPartnerPresence
 } = require("../utils/orderEvents");
 const logger = require("../utils/logger");
-// const Review = require("../module/review.model");
+const {
+  presentRatingSummary,
+  listKitchenReviews
+} = require("../services/orderRating.service");
 
 const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 const BENEFICIARY_NAME_PATTERN = /^[A-Za-z .']{2,70}$/;
@@ -721,35 +724,7 @@ exports.getDashboardStats = async (req, res) => {
     ]);
 
 
-    // /* ---------- RATINGS ---------- */
-
-    // const ratings = await Review.aggregate([
-    //   { $match: { partnerId } },
-    //   {
-    //     $group: {
-    //       _id: null,
-    //       avgRating: { $avg: "$rating" },
-    //       totalReviews: { $sum: 1 }
-    //     }
-    //   }
-    // ]);
-
-
-    const ratingStats = await Order.aggregate([
-      {
-        $match: {
-          partner: partnerId,
-          "rating.partnerRating": { $ne: null }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          averageRating: { $avg: "$rating.partnerRating" },
-          totalReviews: { $sum: 1 }
-        }
-      }
-    ]);
+    const ratingSummary = presentRatingSummary(selectedHotel.ratingSummary);
 
     const menuItemMap = new Map(menuItems.map((item) => [String(item._id), item]));
     const topSellingItems = topSellingItemsRaw.map((item) => {
@@ -834,13 +809,40 @@ exports.getDashboardStats = async (req, res) => {
       },
       liveOrderAlerts,
       unreadLiveAlertCount,
-      averageRating: Number((ratingStats[0]?.averageRating || 0).toFixed(2)),
-      totalReviews: ratingStats[0]?.totalReviews || 0
+      averageRating: ratingSummary.averageRating,
+      totalReviews: ratingSummary.totalReviews,
+      ratingSummary
     });
 
   } catch (error) {
     logger.error("Partner dashboard failed", { message: error.message });
     res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getPartnerReviews = async (req, res) => {
+  try {
+    const { selectedHotel, error } = await resolveAccessibleHotel(req);
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
+
+    const data = await listKitchenReviews({
+      kitchenId: selectedHotel._id,
+      page: req.query.page,
+      limit: req.query.limit
+    });
+
+    return res.json({
+      message: "Reviews fetched successfully",
+      ...data
+    });
+  } catch (error) {
+    logger.error("Partner reviews failed", { message: error.message });
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message, code: error.code });
+    }
+    return res.status(500).json({ message: error.message });
   }
 };
 

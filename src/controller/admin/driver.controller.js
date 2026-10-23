@@ -58,7 +58,7 @@ exports.listDrivers = async (req, res) => {
 
     // Inclusion-only projection — MongoDB forbids mixing `-password` with listed fields.
     const listProjection =
-      "fullName email mobileNumber address status isOnline isAvailable createdAt rejectionReason reviewedAt deletedAt profileImage vehicle documents reviewedBy profileCompleted updatedAt user";
+      "fullName email mobileNumber address status isOnline isAvailable currentOrder createdAt rejectionReason reviewedAt deletedAt profileImage vehicle documents reviewedBy profileCompleted updatedAt user";
 
     const [data, total] = await Promise.all([
       DeliveryAgent.find(query)

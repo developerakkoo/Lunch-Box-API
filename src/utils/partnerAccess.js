@@ -4,7 +4,7 @@ const Partner = require("../module/partner.model");
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
 const SAFE_PARTNER_PROJECTION =
-  "_id ownerPartner kitchenName ownerName email phone address latitude longitude isActive status approvalStatus rejectionReason reviewedAt reviewedBy gstApplicable documents createdAt updatedAt";
+  "_id ownerPartner kitchenName ownerName email phone address latitude longitude isActive status approvalStatus rejectionReason reviewedAt reviewedBy gstApplicable documents ratingSummary createdAt updatedAt";
 
 const getOwnerPartnerId = async (actorPartnerId) => {
   if (!isValidObjectId(actorPartnerId)) return null;

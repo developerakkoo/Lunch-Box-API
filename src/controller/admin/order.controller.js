@@ -231,7 +231,7 @@ exports.getOrderDetails = async (req, res) => {
     const order = await Order.findById(orderId)
       .populate("user", "fullName mobileNumber email addresses walletBalance")
       .populate("partner", "kitchenName ownerName phone address status isActive")
-      .populate("deliveryAgent", "fullName mobileNumber status isOnline isAvailable")
+      .populate("deliveryAgent", "fullName mobileNumber status isOnline isAvailable currentOrder")
       .populate("items.menuItem", "name description price");
 
     if (!order) {

@@ -415,10 +415,21 @@ const options = {
 
         OrderRatingRequest: {
           type: "object",
+          required: ["partnerRating"],
           properties: {
-            partnerRating: { type: "number", example: 5 },
-            deliveryRating: { type: "number", example: 4 },
-            review: { type: "string", example: "Great food and on-time delivery." }
+            partnerRating: { type: "integer", minimum: 1, maximum: 5, example: 5 },
+            deliveryRating: {
+              type: "integer",
+              minimum: 1,
+              maximum: 5,
+              description: "Optional. Applied only when the order has a platform delivery agent.",
+              example: 4
+            },
+            review: {
+              type: "string",
+              maxLength: 500,
+              example: "Great food and on-time delivery."
+            }
           }
         },
 

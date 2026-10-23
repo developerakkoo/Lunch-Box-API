@@ -169,6 +169,36 @@ router.get("/kitchen/:kitchenId/menu", controller.getKitchenMenuForCustomer);
 
 /**
  * @swagger
+ * /api/user/kitchen/{kitchenId}/reviews:
+ *   get:
+ *     summary: Public restaurant ratings and reviews
+ *     tags: [User]
+ *     parameters:
+ *       - in: path
+ *         name: kitchenId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: number
+ *         example: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: number
+ *         example: 10
+ *     responses:
+ *       200:
+ *         description: Reviews fetched successfully
+ *       404:
+ *         description: Kitchen not found
+ */
+router.get("/kitchen/:kitchenId/reviews", controller.getKitchenReviews);
+
+/**
+ * @swagger
  * /api/user/menu-item/{menuItemId}:
  *   get:
  *     summary: Get menu item details for customer product detail page

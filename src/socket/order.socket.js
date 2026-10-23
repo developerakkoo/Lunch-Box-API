@@ -24,6 +24,10 @@ const {
   removeDriverReadyOrder
 } = require("../utils/orderEvents");
 const { setUserOnline } = require("../utils/supportPresence");
+const {
+  RatingError,
+  submitOrderRating
+} = require("../services/orderRating.service");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -648,45 +652,24 @@ const orderSocketHandler = () => {
         const { orderId, partnerRating, deliveryRating, review } = payload || {};
         const order = await resolveOrderForUser(actor.id, orderId);
         if (!order) return callback && callback(apiError("Order not found"));
-        if (order.status !== "DELIVERED") {
-          return callback && callback(apiError("Only delivered orders can be rated"));
-        }
 
-        if (partnerRating !== undefined) {
-          if (Number(partnerRating) < 1 || Number(partnerRating) > 5) {
-            return callback && callback(apiError("partnerRating must be between 1 and 5"));
-          }
-          order.rating.partnerRating = Number(partnerRating);
-        }
+        const result = await submitOrderRating({
+          order,
+          partnerRating,
+          deliveryRating,
+          review
+        });
 
-        if (deliveryRating !== undefined) {
-          if (Number(deliveryRating) < 1 || Number(deliveryRating) > 5) {
-            return callback && callback(apiError("deliveryRating must be between 1 and 5"));
-          }
-          order.rating.deliveryRating = Number(deliveryRating);
-
-          if (order.deliveryAgent) {
-            const agent = await DeliveryAgent.findById(order.deliveryAgent);
-            if (agent) {
-              const prevAvg = agent.rating?.averageRating || 0;
-              const prevCount = agent.rating?.totalRatings || 0;
-              const nextCount = prevCount + 1;
-              const nextAvg = ((prevAvg * prevCount) + Number(deliveryRating)) / nextCount;
-              agent.rating.averageRating = Number(nextAvg.toFixed(2));
-              agent.rating.totalRatings = nextCount;
-              await agent.save();
-            }
-          }
-        }
-
-        if (review !== undefined) {
-          order.rating.review = review;
-        }
-
-        await order.save();
-
-        callback && callback({ status: "ok", message: "Order rating submitted successfully", data: order.rating });
+        callback && callback({
+          status: "ok",
+          message: "Order rating submitted successfully",
+          data: result.rating,
+          ratingSummary: result.ratingSummary
+        });
       } catch (error) {
+        if (error instanceof RatingError) {
+          return callback && callback(apiError(error.message, { code: error.code }));
+        }
         logger.error("rate_order failed", { socketId: socket.id, message: error.message });
         callback && callback({ status: "error", message: error.message });
       }
