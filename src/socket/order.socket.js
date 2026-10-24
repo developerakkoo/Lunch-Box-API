@@ -664,6 +664,7 @@ const orderSocketHandler = () => {
           status: "ok",
           message: "Order rating submitted successfully",
           data: result.rating,
+          partnerId: result.partnerId,
           ratingSummary: result.ratingSummary
         });
       } catch (error) {

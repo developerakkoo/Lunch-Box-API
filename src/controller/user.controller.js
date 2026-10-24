@@ -10,7 +10,8 @@ const { generateAccessToken } = require("../utils/token.utils");
 const { PARTNER_APPROVAL_STATUS } = require("../utils/partnerApproval");
 const {
   presentRatingSummary,
-  listKitchenReviews
+  listKitchenReviews,
+  liveRatingSummaries
 } = require("../services/orderRating.service");
 const { normalizeStoredAssetPath } = require("../utils/media");
 const jwt = require("jsonwebtoken");
@@ -467,6 +468,35 @@ exports.getPublicCategories = async (req, res) => {
   }
 };
 
+async function applyLiveRatings(kitchens) {
+  if (!kitchens.length) return kitchens;
+  try {
+    const live = await liveRatingSummaries(kitchens.map((kitchen) => kitchen._id));
+    return kitchens.map((kitchen) => {
+      const summary = live.get(String(kitchen._id));
+      if (!summary) return kitchen;
+      return {
+        ...kitchen,
+        averageRating: summary.averageRating,
+        totalReviews: summary.totalReviews,
+        ratingSummary: summary
+      };
+    });
+  } catch (_) {
+    return kitchens;
+  }
+}
+
+async function ratingSummaryForKitchen(kitchen) {
+  const stored = presentRatingSummary(kitchen.ratingSummary);
+  try {
+    const live = await liveRatingSummaries([kitchen._id]);
+    return live.get(String(kitchen._id)) || stored;
+  } catch (_) {
+    return stored;
+  }
+}
+
 exports.getNearbyKitchens = async (req, res) => {
   try {
     const {
@@ -563,6 +593,7 @@ exports.getNearbyKitchens = async (req, res) => {
     const limitNumber = Math.max(Number(limit) || 20, 1);
     const startIndex = (pageNumber - 1) * limitNumber;
     const paginated = mapped.slice(startIndex, startIndex + limitNumber);
+    const data = await applyLiveRatings(paginated);
 
     return res.json({
       message: "Nearby kitchens fetched successfully",
@@ -571,7 +602,7 @@ exports.getNearbyKitchens = async (req, res) => {
         limit: limitNumber,
         total: mapped.length
       },
-      data: paginated
+      data
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -592,7 +623,7 @@ exports.getKitchenMenuForCustomer = async (req, res) => {
       return res.status(404).json({ message: "Kitchen not found" });
     }
 
-    const ratingSummary = presentRatingSummary(kitchen.ratingSummary);
+    const ratingSummary = await ratingSummaryForKitchen(kitchen);
 
     const categories = await Category.find({
       $or: [{ partner: kitchenId }, { partner: null }]

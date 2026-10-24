@@ -18,12 +18,19 @@ function emptyDistribution() {
   return { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
 }
 
+function distributionSource(raw) {
+  if (!raw) return {};
+  if (raw instanceof Map) return Object.fromEntries(raw.entries());
+  if (typeof raw.toObject === "function") return raw.toObject();
+  return raw;
+}
+
 function presentRatingSummary(summary) {
   const plain = summary && typeof summary.toObject === "function"
     ? summary.toObject()
     : summary;
   const distribution = emptyDistribution();
-  const source = plain?.distribution || {};
+  const source = distributionSource(plain?.distribution);
   for (const star of [1, 2, 3, 4, 5]) {
     distribution[star] = Number(source[star] ?? source[String(star)] ?? 0);
   }
@@ -88,25 +95,54 @@ function toObjectId(id) {
   return new mongoose.Types.ObjectId(String(id));
 }
 
-async function recomputePartnerRating(partnerId) {
-  if (!partnerId) return presentRatingSummary(null);
+function partnerKey(id) {
+  if (!id) return "";
+  return String(id._id || id);
+}
+
+async function liveRatingSummaries(partnerIds) {
+  const ids = [...new Set((partnerIds || []).map(partnerKey).filter((id) => mongoose.Types.ObjectId.isValid(id)))];
+  const result = new Map();
+  if (!ids.length) return result;
+
   const groups = await Order.aggregate([
     {
       $match: {
-        partner: toObjectId(partnerId),
+        partner: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) },
         status: "DELIVERED",
         "rating.partnerRating": { $gte: 1, $lte: 5 }
       }
     },
     {
       $group: {
-        _id: { $round: ["$rating.partnerRating", 0] },
+        _id: { partner: "$partner", star: "$rating.partnerRating" },
         count: { $sum: 1 }
       }
     }
   ]);
-  const summary = buildRatingSummary(groups);
-  await Partner.updateOne({ _id: partnerId }, { $set: { ratingSummary: summary } });
+
+  const rowsByPartner = new Map(ids.map((id) => [id, []]));
+  for (const row of groups) {
+    const id = String(row._id?.partner || "");
+    if (!rowsByPartner.has(id)) rowsByPartner.set(id, []);
+    rowsByPartner.get(id).push({ _id: row._id?.star, count: row.count });
+  }
+  for (const [id, rows] of rowsByPartner) {
+    result.set(id, buildRatingSummary(rows));
+  }
+  return result;
+}
+
+async function recomputePartnerRating(partnerId) {
+  const id = partnerKey(partnerId);
+  if (!id) return presentRatingSummary(null);
+  const live = await liveRatingSummaries([id]);
+  const summary = live.get(id) || presentRatingSummary(null);
+  try {
+    await Partner.updateOne({ _id: id }, { $set: { ratingSummary: summary } });
+  } catch (_) {
+    // The order rating is already saved. A summary write must not hide it.
+  }
   return summary;
 }
 
@@ -175,13 +211,23 @@ async function submitOrderRating({ order, partnerRating, deliveryRating, review 
   order.markModified("rating");
   await order.save();
 
-  const ratingSummary = await recomputePartnerRating(order.partner);
+  let ratingSummary = presentRatingSummary(null);
+  try {
+    ratingSummary = await recomputePartnerRating(order.partner);
+  } catch (_) {
+    ratingSummary = presentRatingSummary(null);
+  }
   if (hasDriver) {
-    await recomputeDeliveryAgentRating(order.deliveryAgent);
+    try {
+      await recomputeDeliveryAgentRating(order.deliveryAgent);
+    } catch (_) {
+      // Delivery average is derived. A failed recompute still leaves the order rating saved.
+    }
   }
 
   return {
     rating: order.rating,
+    partnerId: partnerKey(order.partner),
     ratingSummary
   };
 }
@@ -230,7 +276,24 @@ async function listKitchenReviews({ kitchenId, page = 1, limit = 10 }) {
     };
   });
 
-  const ratingSummary = presentRatingSummary(partner.ratingSummary);
+  const stored = presentRatingSummary(partner.ratingSummary);
+  let ratingSummary = stored;
+  try {
+    const live = await liveRatingSummaries([kitchenId]);
+    const next = live.get(String(kitchenId));
+    if (next) {
+      ratingSummary = next;
+      if (next.totalReviews !== stored.totalReviews || next.averageRating !== stored.averageRating) {
+        try {
+          await Partner.updateOne({ _id: kitchenId }, { $set: { ratingSummary: next } });
+        } catch (_) {
+          // Return the live summary even when the stored copy cannot be updated.
+        }
+      }
+    }
+  } catch (_) {
+    ratingSummary = stored;
+  }
   return {
     ratingSummary,
     averageRating: ratingSummary.averageRating,
@@ -290,6 +353,7 @@ module.exports = {
   reviewerFirstName,
   parseStar,
   parseReview,
+  liveRatingSummaries,
   recomputePartnerRating,
   recomputeDeliveryAgentRating,
   submitOrderRating,

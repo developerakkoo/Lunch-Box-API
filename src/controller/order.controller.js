@@ -781,6 +781,7 @@ exports.rateOrder = async (req, res) => {
     return res.status(200).json({
       message: "Order rating submitted successfully",
       data: result.rating,
+      partnerId: result.partnerId,
       ratingSummary: result.ratingSummary
     });
   } catch (error) {

@@ -141,11 +141,8 @@ const partnerSchema = new mongoose.Schema(
         default: 0
       },
       distribution: {
-        1: { type: Number, default: 0 },
-        2: { type: Number, default: 0 },
-        3: { type: Number, default: 0 },
-        4: { type: Number, default: 0 },
-        5: { type: Number, default: 0 }
+        type: mongoose.Schema.Types.Mixed,
+        default: () => ({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 })
       }
     },
 

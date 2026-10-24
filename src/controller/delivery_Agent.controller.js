@@ -6,7 +6,10 @@ const Partner = require("../module/partner.model");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const logger = require("../utils/logger");
-const { deleteUploadedFile } = require("../utils/fileStorage");
+const {
+  saveDriverBase64Document,
+  deleteDriverDocumentFile
+} = require("../utils/driverDocuments.util");
 const {
   getDriverApprovalGate,
 } = require("../utils/driverApproval");
@@ -92,10 +95,13 @@ const getUploadedDriverFiles = (req) => {
   return files;
 };
 
+const REQUIRED_DRIVER_DOCUMENTS_MESSAGE =
+  "Aadhaar Card, PAN Card, Vehicle RC and Driving License are required";
+
 const cleanupDriverDocumentFiles = (files) => {
   if (!files) return;
   for (const file of files) {
-    deleteUploadedFile(file?.filename || file?.path || file?.url);
+    deleteDriverDocumentFile(file);
   }
 };
 
@@ -160,6 +166,7 @@ const syncAgentAvailability = async (agent) => {
 };
 
 exports.registerDriver = async (req, res) => {
+  const savedBase64Metas = [];
   try {
     logger.info("Driver register request received", { email: req.body?.email });
     const body = req.body || {};
@@ -174,8 +181,11 @@ exports.registerDriver = async (req, res) => {
     const vehicleNumber = normalizeText(body.vehicleNumber || vehicleInput.vehicleNumber);
     const vehicleModel = normalizeText(body.vehicleModel || vehicleInput.model);
     const vehicleColor = normalizeText(body.vehicleColor || vehicleInput.color);
-    const parsedDocs = getUploadedDriverFiles(req);
+    const isJson = String(req.headers["content-type"] || "").includes("application/json");
+    const parsedDocs = isJson ? [] : getUploadedDriverFiles(req);
     const fileMap = new Map(parsedDocs.map((file) => [file.fieldName, file]));
+    const hasDoc = (field) =>
+      isJson ? Boolean(body?.[`${field}Base64`]) : fileMap.has(field);
 
     const missingFields = [];
     if (!fullName) missingFields.push("fullName");
@@ -206,34 +216,42 @@ exports.registerDriver = async (req, res) => {
       return res.status(400).json({ message: "Email already registered" });
     }
 
-    const aadhaarFile = fileMap.get("aadhaarCard");
-    const panFile = fileMap.get("panCard");
-    const drivingLicenseFile = fileMap.get("drivingLicense");
-    const vehicleRcFile = fileMap.get("vehicleRc");
-
     const uploadedDocMap = {
-      aadhaarCard: aadhaarFile,
-      panCard: panFile,
-      drivingLicense: drivingLicenseFile,
-      vehicleRc: vehicleRcFile
+      aadhaarCard: hasDoc("aadhaarCard"),
+      panCard: hasDoc("panCard"),
+      drivingLicense: hasDoc("drivingLicense"),
+      vehicleRc: hasDoc("vehicleRc")
     };
     const missing = requireDriverDocuments({
       vehicleType,
       docs: uploadedDocMap
     });
-    // Documents are optional at signup (schema allows empty KYC). Only enforce
-    // the full set when the client already started uploading files.
-    if (parsedDocs.length && missing.length) {
+    if (missing.length) {
       cleanupDriverDocumentFiles(parsedDocs);
       return res.status(400).json({
-        message: `Missing required documents: ${missing.join(", ")}`
+        message: REQUIRED_DRIVER_DOCUMENTS_MESSAGE
       });
     }
 
+    const resolveDocumentMeta = (field) => {
+      if (isJson) {
+        const meta = saveDriverBase64Document(
+          body[`${field}Base64`],
+          body[`${field}MimeType`],
+          body[`${field}Name`]
+        );
+        savedBase64Metas.push(meta);
+        return meta;
+      }
+      const file = fileMap.get(field);
+      return file ? buildDocumentMeta(file) : undefined;
+    };
+
     const documents = {
-      aadhaarCard: aadhaarFile ? buildDocumentMeta(aadhaarFile) : undefined,
-      panCard: panFile ? buildDocumentMeta(panFile) : undefined,
-      vehicleRc: vehicleRcFile ? buildDocumentMeta(vehicleRcFile) : undefined,
+      aadhaarCard: resolveDocumentMeta("aadhaarCard"),
+      panCard: resolveDocumentMeta("panCard"),
+      vehicleRc: resolveDocumentMeta("vehicleRc"),
+      drivingLicense: resolveDocumentMeta("drivingLicense"),
       aadhaarNumber: normalizeText(documentsInput.aadhaarNumber || ""),
       panNumber: normalizeText(documentsInput.panNumber || ""),
       licenseNumber: normalizeText(documentsInput.licenseNumber || ""),
@@ -241,10 +259,6 @@ exports.registerDriver = async (req, res) => {
       panImage: documentsInput.panImage || "",
       licenseImage: documentsInput.licenseImage || ""
     };
-
-    if (drivingLicenseFile) {
-      documents.drivingLicense = buildDocumentMeta(drivingLicenseFile);
-    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -273,6 +287,13 @@ exports.registerDriver = async (req, res) => {
     });
   } catch (error) {
     cleanupDriverDocumentFiles(getUploadedDriverFiles(req));
+    cleanupDriverDocumentFiles(savedBase64Metas);
+    if (error.statusCode === 400) {
+      return res.status(400).json({
+        message: error.message,
+        code: error.code || "INVALID_DRIVER_DOCUMENT"
+      });
+    }
     logger.error("Driver registration failed", { message: error.message });
     return res.status(500).json({ message: error.message });
   }

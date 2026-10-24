@@ -8,6 +8,24 @@ const {
   uploadDriverDocuments,
   handleDriverDocumentUploadError
 } = require("../middlewares/driverDocumentUpload.middleware");
+
+const driverDocumentFields = uploadDriverDocuments.fields([
+  { name: "aadhaarCard", maxCount: 1 },
+  { name: "panCard", maxCount: 1 },
+  { name: "drivingLicense", maxCount: 1 },
+  { name: "vehicleRc", maxCount: 1 }
+]);
+
+// Native (Capacitor) clients send documents as base64 JSON to avoid Android
+// WebView multipart failures; other clients continue to use multipart/form-data.
+function maybeDriverDocumentUpload(req, res, next) {
+  if (String(req.headers["content-type"] || "").includes("application/json")) {
+    return next();
+  }
+  return driverDocumentFields(req, res, (err) =>
+    handleDriverDocumentUploadError(err, req, res, next)
+  );
+}
 const {
   logCompleteOrderEntry,
   logCompleteOrderAfterAuth,
@@ -39,13 +57,7 @@ const {
  */
 router.post(
   "/register",
-  uploadDriverDocuments.fields([
-    { name: "aadhaarCard", maxCount: 1 },
-    { name: "panCard", maxCount: 1 },
-    { name: "drivingLicense", maxCount: 1 },
-    { name: "vehicleRc", maxCount: 1 }
-  ]),
-  handleDriverDocumentUploadError,
+  maybeDriverDocumentUpload,
   controller.registerDriver
 );
 
