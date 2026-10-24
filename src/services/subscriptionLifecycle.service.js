@@ -17,29 +17,34 @@ const {
   REFUNDABLE_STATUSES
 } = require("./subscriptionStats.service");
 
+function composeFullAddress(address) {
+  const explicit = String(address?.fullAddress || address?.address || address?.addressLine || "").trim();
+  if (explicit) return explicit;
+  return [address?.city, address?.state, address?.pincode]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function snapshotAddress(address) {
+  return {
+    addressId: address._id,
+    fullAddress: composeFullAddress(address),
+    latitude: address.latitude,
+    longitude: address.longitude,
+    label: address.label
+  };
+}
+
 async function resolveAddress(userId, addressId) {
   const user = await User.findById(userId).select("addresses");
   if (!user?.addresses?.length) return null;
   if (addressId) {
     const found = user.addresses.id(addressId);
-    if (found) {
-      return {
-        addressId: found._id,
-        fullAddress: found.fullAddress,
-        latitude: found.latitude,
-        longitude: found.longitude,
-        label: found.label
-      };
-    }
+    if (found) return snapshotAddress(found);
   }
   const def = user.addresses.find((a) => a.isDefault) || user.addresses[0];
-  return {
-    addressId: def._id,
-    fullAddress: def.fullAddress,
-    latitude: def.latitude,
-    longitude: def.longitude,
-    label: def.label
-  };
+  return snapshotAddress(def);
 }
 
 function countPauseDays(pauseStart, pauseEnd) {

@@ -6,7 +6,11 @@ const { getManagedHotelIds, resolveAccessibleHotel } = require("../utils/partner
 const {
   materializeOrderFromSubscriptionDelivery,
 } = require("../utils/subscriptionOrderBridge");
-const { isDateInPause } = require("../services/subscriptionSchedule.service");
+const {
+  isDateInPause,
+  isScheduledForToday,
+  kolkataDayBounds,
+} = require("../services/subscriptionSchedule.service");
 const { notifyUser } = require("../utils/userNotification");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
@@ -74,11 +78,17 @@ exports.partnerListDeliveries = async (req, res) => {
             ? ["DELIVERED"]
             : [status];
 
+    const deliveryQuery = {
+      userSubscriptionId: { $in: subIds },
+      status: { $in: statusFilter },
+    };
+    if (status !== "COMPLETED") {
+      const { start, end } = kolkataDayBounds();
+      deliveryQuery.deliveryDate = { $gte: start, $lte: end };
+    }
+
     const [deliveries, total] = await Promise.all([
-      SubscriptionDelivery.find({
-        userSubscriptionId: { $in: subIds },
-        status: { $in: statusFilter },
-      })
+      SubscriptionDelivery.find(deliveryQuery)
         .populate({
           path: "userSubscriptionId",
           populate: [
@@ -89,10 +99,7 @@ exports.partnerListDeliveries = async (req, res) => {
         .sort({ deliveryDate: -1 })
         .skip((pageNumber - 1) * limitNumber)
         .limit(limitNumber),
-      SubscriptionDelivery.countDocuments({
-        userSubscriptionId: { $in: subIds },
-        status: { $in: statusFilter },
-      }),
+      SubscriptionDelivery.countDocuments(deliveryQuery),
     ]);
 
     return res.status(200).json({
@@ -133,6 +140,13 @@ exports.partnerDeliveryAction = async (req, res) => {
     const { hotelIds } = await getManagedHotelIds(req.partner?.id || req.user?.id);
     if (!hotelIds.includes(String(partnerId))) {
       return res.status(403).json({ message: "Access denied" });
+    }
+
+    if (action !== "REJECT" && !isScheduledForToday(delivery.deliveryDate)) {
+      return res.status(400).json({
+        code: "SUBSCRIPTION_NOT_DUE",
+        message: "This meal can only be completed on its scheduled date",
+      });
     }
 
     delivery.status = nextStatus;

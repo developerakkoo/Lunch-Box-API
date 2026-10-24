@@ -25,6 +25,11 @@ const {
   RatingError,
   submitOrderRating
 } = require("../services/orderRating.service");
+const {
+  markSubscriptionDeliveryDeliveredFromOrder,
+  markSubscriptionDeliveryOutForDeliveryFromOrder,
+  subscriptionMealDateBlock,
+} = require("../utils/subscriptionOrderBridge");
 const mongoose = require("mongoose");
 const DELIVERY_CHARGE = 40;
 const TAX_RATE = 0.05;
@@ -350,6 +355,10 @@ exports.kitchenAction = async (req, res) => {
       if (order.status !== "READY") {
         return apiError(res, 409, "INVALID_ORDER_STATE", "Only ready orders can be dispatched");
       }
+      const dispatchDateBlock = await subscriptionMealDateBlock(order);
+      if (dispatchDateBlock) {
+        return apiError(res, 400, "SUBSCRIPTION_NOT_DUE", dispatchDateBlock);
+      }
       order.status = "OUT_FOR_DELIVERY";
       order.timeline.pickedAt = new Date();
       await order.save();
@@ -360,12 +369,17 @@ exports.kitchenAction = async (req, res) => {
         type: "ORDER_PICKED",
         order,
       });
+      await markSubscriptionDeliveryOutForDeliveryFromOrder(order);
     } else if (action === "DELIVERED") {
       if (!order.selfDelivery) {
         return apiError(res, 409, "INVALID_ACTION", "DELIVERED action is only available for self-delivery orders");
       }
       if (order.status !== "OUT_FOR_DELIVERY") {
         return apiError(res, 409, "INVALID_ORDER_STATE", "Only out-for-delivery orders can be marked delivered");
+      }
+      const deliveredDateBlock = await subscriptionMealDateBlock(order);
+      if (deliveredDateBlock) {
+        return apiError(res, 400, "SUBSCRIPTION_NOT_DUE", deliveredDateBlock);
       }
       order.status = "DELIVERED";
       order.timeline.deliveredAt = new Date();
@@ -377,6 +391,7 @@ exports.kitchenAction = async (req, res) => {
         type: "ORDER_DELIVERED",
         order,
       });
+      await markSubscriptionDeliveryDeliveredFromOrder(order);
     } else if (action === "REJECT") {
       if (!["PLACED", "ACCEPTED", "PREPARING", "READY"].includes(order.status)) {
         return apiError(res, 409, "INVALID_ORDER_STATE", "Order cannot be rejected at current status");

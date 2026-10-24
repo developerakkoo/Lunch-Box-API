@@ -19,13 +19,48 @@ function endOfDay(d) {
   return x;
 }
 
+const BUSINESS_TIME_ZONE = "Asia/Kolkata";
+
+function calendarDayKey(date, timeZone = BUSINESS_TIME_ZONE) {
+  const value = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(value.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(value);
+}
+
+function isScheduledForToday(date, now = new Date()) {
+  const scheduled = calendarDayKey(date);
+  return scheduled !== "" && scheduled === calendarDayKey(now);
+}
+
+function kolkataDayBounds(now = new Date()) {
+  const key = calendarDayKey(now);
+  return {
+    start: new Date(`${key}T00:00:00+05:30`),
+    end: new Date(`${key}T23:59:59.999+05:30`),
+  };
+}
+
+const MEAL_TYPES = new Set(["BREAKFAST", "LUNCH", "DINNER", "CUSTOM"]);
+
 function resolveMealTypesForPlan(plan) {
-  if (plan.mealTypes?.length) return plan.mealTypes;
-  if (plan.mealType === "BOTH") return ["LUNCH", "DINNER"];
-  if (plan.mealType === "BREAKFAST") return ["BREAKFAST"];
-  if (plan.mealType === "DINNER") return ["DINNER"];
-  if (plan.mealType === "CUSTOM") return ["CUSTOM"];
-  return ["LUNCH"];
+  const raw = plan.mealTypes?.length
+    ? plan.mealTypes
+    : plan.mealType === "BOTH"
+      ? ["LUNCH", "DINNER"]
+      : plan.mealType === "BREAKFAST"
+        ? ["BREAKFAST"]
+        : plan.mealType === "DINNER"
+          ? ["DINNER"]
+          : plan.mealType === "CUSTOM"
+            ? ["CUSTOM"]
+            : ["LUNCH"];
+  const types = raw.filter((type) => MEAL_TYPES.has(type));
+  return types.length ? types : ["LUNCH"];
 }
 
 function isDateInPause(subscription, date) {
@@ -304,5 +339,8 @@ module.exports = {
   appendReplacementDelivery,
   activateDueDeliveries,
   getTomorrowDemandByPartner,
-  resolveMealTypesForPlan
+  resolveMealTypesForPlan,
+  calendarDayKey,
+  isScheduledForToday,
+  kolkataDayBounds,
 };

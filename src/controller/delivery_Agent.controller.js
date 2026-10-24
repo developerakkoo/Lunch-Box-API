@@ -33,7 +33,8 @@ const { saveBase64Proof } = require("../utils/proofUpload.util");
 const { transitionOrder } = require("../services/orderTransition.service");
 const {
   markSubscriptionDeliveryDeliveredFromOrder,
-  markSubscriptionDeliveryOutForDeliveryFromOrder
+  markSubscriptionDeliveryOutForDeliveryFromOrder,
+  subscriptionMealDateBlock,
 } = require("../utils/subscriptionOrderBridge");
 
 const getDriverIdFromReq = (req) => req?.driver?.id;
@@ -735,6 +736,10 @@ exports.pickOrder = async (req, res) => {
     if (order.status !== "READY") {
       return res.status(400).json({ message: "Only ready orders can be picked" });
     }
+    const pickDateBlock = await subscriptionMealDateBlock(order);
+    if (pickDateBlock) {
+      return res.status(400).json({ code: "SUBSCRIPTION_NOT_DUE", message: pickDateBlock });
+    }
 
     await transitionOrder({
       order,
@@ -799,6 +804,14 @@ exports.completeOrder = async (req, res) => {
         status: order.status
       });
       return res.status(400).json({ message: "Only out for delivery orders can be completed", debugId });
+    }
+    const completeDateBlock = await subscriptionMealDateBlock(order);
+    if (completeDateBlock) {
+      return res.status(400).json({
+        code: "SUBSCRIPTION_NOT_DUE",
+        message: completeDateBlock,
+        debugId,
+      });
     }
 
     let proofFile = "";

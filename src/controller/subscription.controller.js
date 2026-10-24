@@ -1,15 +1,21 @@
 const SubscriptionPlan = require("../module/subscriptionPlan.model");
+const User = require("../module/user.model");
 const UserSubscription = require("../module/userSubscription.model");
 const SubscriptionDelivery = require("../module/subscriptionDelivery.model");
 const SubscriptionTransaction = require("../module/subscriptionTransaction.model");
 const { createOrder: createRazorpayOrder, verifySignature } = require("../utils/razorpay");
 const { createPaymentIntent, retrievePaymentIntent } = require("../utils/stripe");
-const { postLedgerEntry } = require("../services/walletLedger.service");
+const { postLedgerEntry, PLATFORM_OWNER_ID } = require("../services/walletLedger.service");
 const {
   resolveCommissionPercent,
   recordSubscriptionPaymentSplit
 } = require("../services/subscriptionCommission.service");
-const { scheduleSubscriptionDeliveries, DAY_MS } = require("../services/subscriptionSchedule.service");
+const {
+  scheduleSubscriptionDeliveries,
+  DAY_MS,
+  startOfDay,
+  isDateInPause
+} = require("../services/subscriptionSchedule.service");
 const {
   resolveAddress,
   pauseSubscription,
@@ -22,12 +28,47 @@ const {
   previewCancelRefund
 } = require("../services/subscriptionLifecycle.service");
 const { attachMealStatsToSubscriptions } = require("../services/subscriptionStats.service");
-const { isDateInPause } = require("../services/subscriptionSchedule.service");
 const { logAudit } = require("../services/subscriptionAudit.service");
 const {
   notifyUserSubscriptionEvent,
   notifyPartnerSubscription
 } = require("../services/subscriptionNotification.service");
+
+function parseCalendarDate(value) {
+  const raw = String(value || "").trim().replace(" ", "+");
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (dateOnly) {
+    const parsed = new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseSubscriptionStart(value) {
+  if (!value) return startOfDay(new Date());
+  const parsed = parseCalendarDate(value);
+  return parsed ? startOfDay(parsed) : null;
+}
+
+async function rollbackFailedWalletPurchase(subscriptionId, { userId, amount, debited }) {
+  if (debited && amount > 0) {
+    await postLedgerEntry({
+      ownerType: "USER",
+      ownerId: userId,
+      type: "CREDIT",
+      source: "SUBSCRIPTION_REFUND",
+      amount,
+      gateway: "WALLET",
+      referenceType: "UserSubscription",
+      referenceId: subscriptionId,
+      notes: "Subscription purchase reversed"
+    }).catch(() => {});
+  }
+  await SubscriptionDelivery.deleteMany({ userSubscriptionId: subscriptionId }).catch(() => {});
+  await SubscriptionTransaction.deleteMany({ userSubscriptionId: subscriptionId }).catch(() => {});
+  await UserSubscription.findByIdAndDelete(subscriptionId).catch(() => {});
+}
 
 exports.listPlans = async (req, res) => {
   try {
@@ -110,13 +151,26 @@ exports.purchaseSubscription = async (req, res) => {
       return res.status(400).json({ message: "Valid delivery address is required" });
     }
 
-    const start = startDate ? new Date(startDate) : new Date();
-    if (Number.isNaN(start.getTime())) {
+    const start = parseSubscriptionStart(startDate);
+    if (!start) {
       return res.status(400).json({ message: "Invalid startDate" });
     }
 
     const end = new Date(start.getTime() + (plan.durationInDays - 1) * DAY_MS);
-    const payAmount = plan.discountedPrice ?? plan.totalPrice;
+    const payAmount = Number(plan.discountedPrice ?? plan.totalPrice);
+    if (!Number.isFinite(payAmount) || payAmount < 0) {
+      return res.status(400).json({ message: "Plan price is invalid" });
+    }
+
+    if (paymentMethod === "WALLET" && payAmount > 0) {
+      const payer = await User.findById(userId).select("walletBalance");
+      if ((payer?.walletBalance || 0) < payAmount) {
+        return res.status(400).json({
+          code: "INSUFFICIENT_WALLET_BALANCE",
+          message: "Insufficient wallet balance"
+        });
+      }
+    }
     const commissionPercent = await resolveCommissionPercent({
       partnerId: plan.partnerId,
       planId: plan._id
@@ -146,26 +200,30 @@ exports.purchaseSubscription = async (req, res) => {
     });
 
     if (paymentMethod === "WALLET") {
+      let debited = false;
+      let split = { commissionAmount: 0, partnerNetAmount: 0 };
       try {
-        await postLedgerEntry({
-          ownerType: "USER",
-          ownerId: userId,
-          type: "DEBIT",
-          source: "SUBSCRIPTION_PAYMENT",
-          amount: payAmount,
-          gateway: "WALLET",
-          referenceType: "UserSubscription",
-          referenceId: userSubscription._id,
-          notes: "Subscription purchased with wallet"
-        });
-
-        const split = await recordSubscriptionPaymentSplit({
-          userId,
-          partnerId: plan.partnerId,
-          totalAmount: payAmount,
-          userSubscriptionId: userSubscription._id,
-          paymentMethod: "WALLET"
-        });
+        if (payAmount > 0) {
+          await postLedgerEntry({
+            ownerType: "USER",
+            ownerId: userId,
+            type: "DEBIT",
+            source: "SUBSCRIPTION_PAYMENT",
+            amount: payAmount,
+            gateway: "WALLET",
+            referenceType: "UserSubscription",
+            referenceId: userSubscription._id,
+            notes: "Subscription purchased with wallet"
+          });
+          debited = true;
+          split = await recordSubscriptionPaymentSplit({
+            userId,
+            partnerId: plan.partnerId,
+            totalAmount: payAmount,
+            userSubscriptionId: userSubscription._id,
+            paymentMethod: "WALLET"
+          });
+        }
 
         userSubscription.platformFeeAmount = split.commissionAmount;
         userSubscription.partnerNetAmount = split.partnerNetAmount;
@@ -190,13 +248,12 @@ exports.purchaseSubscription = async (req, res) => {
           title: "Subscription activated",
           message: `Your ${plan.title} plan is now active.`,
           type: "ACTIVATED"
-        });
+        }).catch(() => {});
         await notifyPartnerSubscription(plan.partnerId, {
           title: "New subscriber",
           message: "A customer subscribed to your meal plan.",
           type: "NEW_SUBSCRIBER"
-        });
-
+        }).catch(() => {});
         await logAudit({
           entityType: "UserSubscription",
           entityId: userSubscription._id,
@@ -204,15 +261,51 @@ exports.purchaseSubscription = async (req, res) => {
           actorType: "USER",
           actorId: userId,
           metadata: { transactionId: txn._id }
-        });
+        }).catch(() => {});
 
         return res.status(201).json({
           message: "Subscription purchased successfully",
           data: userSubscription
         });
       } catch (payErr) {
-        await UserSubscription.findByIdAndDelete(userSubscription._id);
-        return res.status(400).json({ message: payErr.message });
+        if (split.partnerNetAmount > 0) {
+          await postLedgerEntry({
+            ownerType: "PARTNER",
+            ownerId: plan.partnerId,
+            type: "DEBIT",
+            source: "SUBSCRIPTION_REFUND",
+            amount: split.partnerNetAmount,
+            gateway: "WALLET",
+            referenceType: "UserSubscription",
+            referenceId: userSubscription._id,
+            notes: "Subscription purchase reversed"
+          }).catch(() => {});
+        }
+        if (split.commissionAmount > 0) {
+          await postLedgerEntry({
+            ownerType: "PLATFORM",
+            ownerId: PLATFORM_OWNER_ID,
+            type: "DEBIT",
+            source: "SUBSCRIPTION_REFUND",
+            amount: split.commissionAmount,
+            gateway: "WALLET",
+            referenceType: "UserSubscription",
+            referenceId: userSubscription._id,
+            notes: "Subscription purchase reversed"
+          }).catch(() => {});
+        }
+        await rollbackFailedWalletPurchase(userSubscription._id, {
+          userId,
+          amount: payAmount,
+          debited
+        });
+        const message = /insufficient balance/i.test(String(payErr.message))
+          ? "Insufficient wallet balance"
+          : payErr.message || "Could not complete wallet payment";
+        return res.status(400).json({
+          code: /insufficient/i.test(message) ? "INSUFFICIENT_WALLET_BALANCE" : "WALLET_PAYMENT_FAILED",
+          message
+        });
       }
     }
 
@@ -253,6 +346,19 @@ exports.purchaseSubscription = async (req, res) => {
     await UserSubscription.findByIdAndDelete(userSubscription._id);
     return res.status(400).json({ message: "Invalid payment method" });
   } catch (error) {
+    const retryKey = req.body?.idempotencyKey;
+    if (error?.code === 11000 && retryKey) {
+      const existing = await UserSubscription.findOne({
+        userId: req.user.id,
+        idempotencyKey: retryKey
+      });
+      if (existing) {
+        return res.status(200).json({
+          message: "Subscription already created",
+          data: existing
+        });
+      }
+    }
     return res.status(500).json({ message: error.message });
   }
 };
@@ -645,10 +751,10 @@ exports.getSubscriptionDeliveriesCalendarRange = async (req, res) => {
         .json({ message: "Query params 'from' and 'to' are required (ISO date strings)" });
     }
 
-    const fromDate = new Date(from);
-    const toDate = new Date(to);
+    const fromDate = parseCalendarDate(from);
+    const toDate = parseCalendarDate(to);
 
-    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+    if (!fromDate || !toDate) {
       return res.status(400).json({ message: "Invalid from or to date" });
     }
     if (toDate.getTime() < fromDate.getTime()) {

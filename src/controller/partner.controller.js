@@ -897,6 +897,7 @@ exports.getOrdersByStatus = async (req, res) => {
         .populate("user", "fullName mobileNumber")
         .populate("deliveryAgent", "fullName mobileNumber")
         .populate("items.menuItem", "name price image")
+        .populate("subscriptionDeliveryId", "deliveryDate status")
         .sort(sortSpec)
         .skip((pageNumber - 1) * limitNumber)
         .limit(limitNumber),
@@ -966,7 +967,8 @@ exports.getPartnerOrderById = async (req, res) => {
     })
       .populate("user", "fullName mobileNumber")
       .populate("deliveryAgent", "fullName mobileNumber")
-      .populate("items.menuItem", "name price image description");
+      .populate("items.menuItem", "name price image description")
+      .populate("subscriptionDeliveryId", "deliveryDate status");
 
     if (!order) {
       return res.status(404).json({ message: "Order not found" });

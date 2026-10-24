@@ -72,29 +72,33 @@ async function recordSubscriptionPaymentSplit({
           ? "STRIPE"
           : "SYSTEM";
 
-  const platformEntry = await postLedgerEntry({
-    ownerType: "PLATFORM",
-    ownerId: PLATFORM_OWNER_ID,
-    type: "CREDIT",
-    source: "SUBSCRIPTION_COMMISSION",
-    amount: commissionAmount,
-    gateway,
-    referenceType: "UserSubscription",
-    referenceId: userSubscriptionId,
-    notes: `Commission ${appliedPct}% on subscription payment`
-  });
+  const platformEntry = commissionAmount > 0
+    ? await postLedgerEntry({
+      ownerType: "PLATFORM",
+      ownerId: PLATFORM_OWNER_ID,
+      type: "CREDIT",
+      source: "SUBSCRIPTION_COMMISSION",
+      amount: commissionAmount,
+      gateway,
+      referenceType: "UserSubscription",
+      referenceId: userSubscriptionId,
+      notes: `Commission ${appliedPct}% on subscription payment`
+    })
+    : null;
 
-  const partnerEntry = await postLedgerEntry({
-    ownerType: "PARTNER",
-    ownerId: partnerId,
-    type: "CREDIT",
-    source: "SUBSCRIPTION_PAYMENT",
-    amount: partnerNetAmount,
-    gateway,
-    referenceType: "UserSubscription",
-    referenceId: userSubscriptionId,
-    notes: "Partner net from subscription"
-  });
+  const partnerEntry = partnerNetAmount > 0
+    ? await postLedgerEntry({
+      ownerType: "PARTNER",
+      ownerId: partnerId,
+      type: "CREDIT",
+      source: "SUBSCRIPTION_PAYMENT",
+      amount: partnerNetAmount,
+      gateway,
+      referenceType: "UserSubscription",
+      referenceId: userSubscriptionId,
+      notes: "Partner net from subscription"
+    })
+    : null;
 
   return {
     commissionPercent: appliedPct,

@@ -10,6 +10,19 @@ const { isSelfDeliveryOrder } = require("./selfDelivery");
 const { publishOrderEvent } = require("./orderEvents");
 const { notifyUser } = require("./userNotification");
 const logger = require("./logger");
+const { isScheduledForToday } = require("../services/subscriptionSchedule.service");
+
+const SUBSCRIPTION_NOT_DUE_MESSAGE =
+  "This meal can only be completed on its scheduled date";
+
+async function subscriptionMealDateBlock(order) {
+  if (!order?.subscriptionDeliveryId) return null;
+  const delivery = await SubscriptionDelivery.findById(order.subscriptionDeliveryId)
+    .select("deliveryDate")
+    .lean();
+  if (!delivery?.deliveryDate || isScheduledForToday(delivery.deliveryDate)) return null;
+  return SUBSCRIPTION_NOT_DUE_MESSAGE;
+}
 
 /**
  * Emits the updated delivery to the subscriber and the kitchen so both apps
@@ -257,4 +270,5 @@ module.exports = {
   materializeOrderFromSubscriptionDelivery,
   markSubscriptionDeliveryDeliveredFromOrder,
   markSubscriptionDeliveryOutForDeliveryFromOrder,
+  subscriptionMealDateBlock,
 };

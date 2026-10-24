@@ -28,6 +28,11 @@ const {
   RatingError,
   submitOrderRating
 } = require("../services/orderRating.service");
+const {
+  markSubscriptionDeliveryDeliveredFromOrder,
+  markSubscriptionDeliveryOutForDeliveryFromOrder,
+  subscriptionMealDateBlock,
+} = require("../utils/subscriptionOrderBridge");
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -488,6 +493,14 @@ const orderSocketHandler = () => {
           if (order.status !== "READY") {
             return callback && callback({ status: "error", message: "Only ready orders can be dispatched" });
           }
+          const dispatchDateBlock = await subscriptionMealDateBlock(order);
+          if (dispatchDateBlock) {
+            return callback && callback({
+              status: "error",
+              code: "SUBSCRIPTION_NOT_DUE",
+              message: dispatchDateBlock,
+            });
+          }
           order.status = "OUT_FOR_DELIVERY";
           order.timeline.pickedAt = new Date();
           await order.save();
@@ -497,12 +510,21 @@ const orderSocketHandler = () => {
             type: "ORDER_PICKED",
             order,
           });
+          await markSubscriptionDeliveryOutForDeliveryFromOrder(order);
         } else if (action === "DELIVERED") {
           if (!order.selfDelivery) {
             return callback && callback({ status: "error", message: "DELIVERED action is only available for self-delivery orders" });
           }
           if (order.status !== "OUT_FOR_DELIVERY") {
             return callback && callback({ status: "error", message: "Only out-for-delivery orders can be marked delivered" });
+          }
+          const deliveredDateBlock = await subscriptionMealDateBlock(order);
+          if (deliveredDateBlock) {
+            return callback && callback({
+              status: "error",
+              code: "SUBSCRIPTION_NOT_DUE",
+              message: deliveredDateBlock,
+            });
           }
           order.status = "DELIVERED";
           order.timeline.deliveredAt = new Date();
@@ -513,6 +535,7 @@ const orderSocketHandler = () => {
             type: "ORDER_DELIVERED",
             order,
           });
+          await markSubscriptionDeliveryDeliveredFromOrder(order);
         } else if (action === "REJECT") {
           order.status = "CANCELLED";
           order.timeline.cancelledAt = new Date();
